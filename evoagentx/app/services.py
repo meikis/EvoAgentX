@@ -15,6 +15,7 @@ from evoagentx.app.schemas import (
     AgentCreate, AgentUpdate, WorkflowCreate, WorkflowUpdate, 
     ExecutionCreate, PaginationParams, SearchParams
 )
+from evoagentx.models.model_configs import OpenAILLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,42 @@ class AgentService:
         agents = await cursor.to_list(length=params.limit)
         return agents, total
 
+    @staticmethod
+    async def execute_query(query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Simulate executing an agent with a query."""
+        if not ObjectId.is_valid(query["agent_id"]):
+            raise ValueError(f"Invalid agent ID: {query['agent_id']}")
+        
+        # Retrieve the agent information
+        agent_data = await Database.agents.find_one({"_id": ObjectId(query["agent_id"])})
+        if not agent_data:
+            raise ValueError("Agent not found")
+        
+        # Create an LLMConfig object from the agent's config
+        llm_config_data = agent_data.get("config", {})
+        llm_config = OpenAILLMConfig(
+            llm_type=llm_config_data.get("llm_type", "OpenAILLM"),
+            model=llm_config_data.get("model", "gpt-3.5-turbo"),
+            openai_key=llm_config_data.get("openai_key"),
+            temperature=llm_config_data.get("temperature", 0.7),
+            max_tokens=llm_config_data.get("max_tokens", 150),
+            top_p=llm_config_data.get("top_p", 0.9),
+            output_response=llm_config_data.get("output_response", True),
+        )
+        
+        # return [agent_data.get("name", {}), agent_data.get("description", {}), llm_config, query["agent_id"]]
+        # Create an Agent object
+        agent = Agent(
+            name=agent_data["name"],
+            description=agent_data["description"],
+            llm_config=llm_config,
+            agent_id = query["agent_id"],
+        )
+        
+        # Simulate execution logic
+        # For now, just return the agent's information
+        return agent.dict()
+
 # Workflow Service
 class WorkflowService:
     @staticmethod
@@ -251,26 +288,34 @@ class WorkflowService:
         if not ObjectId.is_valid(workflow_id):
             raise ValueError(f"Invalid workflow ID: {workflow_id}")
         
-        # Check if workflow has any ongoing or recent executions
-        recent_executions = await Database.executions.count_documents({
-            "workflow_id": workflow_id,
-            "status": {"$in": [
-                ExecutionStatus.PENDING, 
-                ExecutionStatus.RUNNING
-            ]}
-        })
+        # Find all executions for the workflow
+        executions = await Database.executions.find({"workflow_id": workflow_id}).to_list(length=None)
         
-        if recent_executions > 0:
-            raise ValueError(f"Cannot delete workflow {workflow_id} with {recent_executions} active executions")
-
+        # Separate pending and running executions
+        pending_executions = [exec for exec in executions if exec["status"] == ExecutionStatus.PENDING]
+        running_executions = [exec for exec in executions if exec["status"] == ExecutionStatus.RUNNING]
+        
+        # If there are running executions, raise an error
+        if running_executions:
+            raise ValueError(f"Cannot delete workflow {workflow_id} with {len(running_executions)} running executions")
+        
+        # Stop and remove pending executions
+        for exec in pending_executions:
+            await WorkflowExecutionService.update_execution_status(
+                execution_id=str(exec["_id"]),
+                status=ExecutionStatus.CANCELLED
+            )
+            await Database.executions.delete_one({"_id": exec["_id"]})
+            logger.info(f"Stopped and removed pending execution {exec['_id']} for workflow {workflow_id}")
+        
+        # Delete the workflow
         result = await Database.workflows.delete_one({"_id": ObjectId(workflow_id)})
         if result.deleted_count:
-            # Delete associated execution logs
+            # Optionally, delete associated logs
             await Database.logs.delete_many({"workflow_id": workflow_id})
-            await Database.executions.delete_many({"workflow_id": workflow_id})
-            
             logger.info(f"Deleted workflow {workflow_id}")
             return True
+        
         return False
     
     @staticmethod

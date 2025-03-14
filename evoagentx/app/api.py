@@ -24,7 +24,7 @@ from evoagentx.app.security import (
     get_current_active_user,
     get_current_admin_user
 )
-from evoagentx.app.db import Database
+from evoagentx.app.db import Database, ExecutionStatus
 
 # Create routers for different route groups
 auth_router = APIRouter(prefix=settings.API_PREFIX)
@@ -134,7 +134,23 @@ async def delete_agent(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
+@agents_router.post("/agents/{agent_id}/execute", tags=["Agents"])
+async def execute_agent(
+    query: Dict[str, Any],
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """Simulate executing an agent with a query."""
+    try:
+        # Use the updated service method to simulate execution
+        
+        agent_info = await AgentService.execute_query(query)
+        if not agent_info:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        
+        # Convert ObjectId to string for consistency
+        return agent_info
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # Workflow Routes
 @workflows_router.post("/workflows", response_model=WorkflowResponse,status_code=201, tags=["Workflows"])
