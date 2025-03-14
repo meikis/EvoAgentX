@@ -15,7 +15,8 @@ from evoagentx.app.schemas import (
     AgentCreate, AgentUpdate, WorkflowCreate, WorkflowUpdate, 
     ExecutionCreate, PaginationParams, SearchParams
 )
-from evoagentx.models.model_configs import OpenAILLMConfig
+from evoagentx.app.shared import agent_manager
+
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 class AgentService:
     @staticmethod
     async def create_agent(agent_data: AgentCreate, user_id: Optional[str] = None) -> Dict[str, Any]:
-        """Create a new agent."""
+        """Create a new agent and add it to the AgentManager."""
         agent_dict = agent_data.dict()
         agent_dict["created_by"] = user_id
         agent_dict["created_at"] = datetime.utcnow()
@@ -34,13 +35,30 @@ class AgentService:
         existing_agent = await Database.agents.find_one({"name": agent_dict["name"]})
         if existing_agent:
             raise ValueError(f"Agent with name '{agent_dict['name']}' already exists")
+                
+        try:
+            agent_manager.add_agent({
+                "name": agent_dict["name"],
+                "description": agent_dict["description"],
+                "prompt": agent_dict["config"]["prompt"],
+                "llm_config": agent_dict["config"],
+                "runtime_params": agent_dict["runtime_params"],
+            })
+            logger.info(f"Added agent {agent_dict['name']} to AgentManager")
+        except Exception as e:
+            logger.error(f"Failed to add agent {agent_dict['name']} to AgentManager: {e}, agent_dict: {agent_dict}")
+            raise ValueError(f"Failed to add agent to AgentManager: {e}")
         
-        result = await Database.agents.insert_one(agent_dict)
-        agent_dict["_id"] = result.inserted_id
+        try:
+            result = await Database.agents.insert_one(agent_dict)
+            agent_dict["_id"] = result.inserted_id
+            logger.info(f"Created agent {agent_dict['name']} with ID {result.inserted_id}")
+            return agent_dict
+        except Exception as e:
+            logger.error(f"Failed to add agent {agent_dict['name']} to Database: {e}, agent_dict: {agent_dict}")
+            raise ValueError(f"Failed to add agent to Database: {e}")
         
-        logger.info(f"Created agent {agent_dict['name']} with ID {result.inserted_id}")
-        
-        return agent_dict
+
     
     @staticmethod
     async def get_agent(agent_id: str) -> Optional[Dict[str, Any]]:
@@ -90,15 +108,20 @@ class AgentService:
     
     @staticmethod
     async def delete_agent(agent_id: str) -> bool:
-        """Delete an agent."""
+        """Delete an agent and remove it from the AgentManager."""
         if not ObjectId.is_valid(agent_id):
             raise ValueError(f"Invalid agent ID: {agent_id}")
-            
+          
+        # Remove the agent from the AgentManager
+        agent = await Database.agents.find_one({"_id": ObjectId(agent_id)})
+        if agent:
+            agent_manager.remove_agent(agent_name=agent["name"])
+          
         # Check if agent is used in any workflows
         workflow_count = await Database.workflows.count_documents({"agent_ids": agent_id})
         if workflow_count > 0:
             raise ValueError(f"Cannot delete agent {agent_id} as it is used in {workflow_count} workflows")
-        
+
         result = await Database.agents.delete_one({"_id": ObjectId(agent_id)})
         if result.deleted_count:
             logger.info(f"Deleted agent {agent_id}")
@@ -142,42 +165,6 @@ class AgentService:
         
         agents = await cursor.to_list(length=params.limit)
         return agents, total
-
-    @staticmethod
-    async def execute_query(query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Simulate executing an agent with a query."""
-        if not ObjectId.is_valid(query["agent_id"]):
-            raise ValueError(f"Invalid agent ID: {query['agent_id']}")
-        
-        # Retrieve the agent information
-        agent_data = await Database.agents.find_one({"_id": ObjectId(query["agent_id"])})
-        if not agent_data:
-            raise ValueError("Agent not found")
-        
-        # Create an LLMConfig object from the agent's config
-        llm_config_data = agent_data.get("config", {})
-        llm_config = OpenAILLMConfig(
-            llm_type=llm_config_data.get("llm_type", "OpenAILLM"),
-            model=llm_config_data.get("model", "gpt-3.5-turbo"),
-            openai_key=llm_config_data.get("openai_key"),
-            temperature=llm_config_data.get("temperature", 0.7),
-            max_tokens=llm_config_data.get("max_tokens", 150),
-            top_p=llm_config_data.get("top_p", 0.9),
-            output_response=llm_config_data.get("output_response", True),
-        )
-        
-        # return [agent_data.get("name", {}), agent_data.get("description", {}), llm_config, query["agent_id"]]
-        # Create an Agent object
-        agent = Agent(
-            name=agent_data["name"],
-            description=agent_data["description"],
-            llm_config=llm_config,
-            agent_id = query["agent_id"],
-        )
-        
-        # Simulate execution logic
-        # For now, just return the agent's information
-        return agent.dict()
 
 # Workflow Service
 class WorkflowService:
