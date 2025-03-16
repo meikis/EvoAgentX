@@ -211,14 +211,13 @@ class BaseLLM(ABC):
         return self
 
     @abstractmethod
-    def formulate_messages(self, prompts: List[str], system_messages: Optional[List[str]] = None, history: Optional[List[List[dict]]] = None) -> List[List[dict]]:
+    def formulate_messages(self, prompts: List[str], system_messages: Optional[List[str]] = None) -> List[List[dict]]:
         """
         Converts input prompts into the chat format compatible with different LLMs.
 
         Args:
             prompts (List[str]): A list of user prompts that need to be converted.
             system_messages (Optional[List[str]]): An optional list of system messages that provide instructions or context to the model.
-            history (Optional[List[List[dict]]]): An optional list of conversation history messages.
         
         Returns:
             List[List[dict]]: A list of message lists, where each inner list contains messages in the chat format required by LLMs. 
@@ -281,7 +280,6 @@ class BaseLLM(ABC):
         prompt: Optional[Union[str, List[str]]] = None,
         system_message: Optional[Union[str, List[str]]] = None,
         messages: Optional[Union[List[dict],List[List[dict]]]] = None,
-        history: Optional[Union[List[dict], List[List[dict]]]] = None,
         parser: Optional[Type[LLMOutputParser]] = None,
         parse_mode: Optional[str] = "json", 
         parse_func: Optional[Callable] = None,
@@ -295,7 +293,6 @@ class BaseLLM(ABC):
             prompt (Union[str, List[str]]): the input to the LLM. 
             system_message (str): the system message for the LLM. 
             messages: (Union[List[dict],List[List[dict]]]): the chat message for the LLM. 
-            history: (Union[List[dict],List[List[dict]]]): the conversation history for the LLM.
             parser (Optional[Type[LLMOutputParser]]): A LLMOutputParser (sub)class used to parse the LLM output.
                 This class should implement .parse() method to parse the output. If None, LLMOutputParser will be used by default.
         
@@ -326,10 +323,7 @@ class BaseLLM(ABC):
                     if not isinstance(system_message, str):
                         raise TypeError(f"'system_message' should be a string when passing a single prompt, but found {type(system_message)}.")
                     system_message = [system_message]
-                if history and not isinstance(history[0], dict):
-                    raise TypeError(f"'history' should be a list of messages when passing a single prompt.")
-                history = [history] if history else None
-                messages = self.formulate_messages(prompts=prompt, system_messages=system_message, history=history)
+                messages = self.formulate_messages(prompts=prompt, system_messages=system_message)
             elif isinstance(prompt, list) and all(isinstance(p, str) for p in prompt):
                 single_generate = False
                 if not prompt: # empty prompt
@@ -337,10 +331,7 @@ class BaseLLM(ABC):
                 if system_message:
                     if not isinstance(system_message, list) or len(prompt) != len(system_message):
                         raise ValueError(f"'system_message' should be a list of string when passing multiple prompts and the number of prompts ({len(prompt)}) must match the number of system messages ({len(system_message)}).")
-                if history:
-                    if not isinstance(history, list) or len(prompt) != len(history):
-                        raise ValueError(f"'history' should be a list of message lists when passing multiple prompts and the number of prompts ({len(prompt)}) must match the number of history entries ({len(history)}).")
-                messages = self.formulate_messages(prompts=prompt, system_messages=system_message, history=history)
+                messages = self.formulate_messages(prompts=prompt, system_messages=system_message)
             else:
                 raise ValueError(f"'prompt' must be a str or List[str], but found {type(prompt)}.")
         

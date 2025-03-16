@@ -210,18 +210,37 @@ class AgentService:
             # Initialize the model
             llm.init_model()
             
-            # Generate response
-            response = llm.generate(
-                prompt=query.prompt,
-                system_message=agent_instance.system_prompt,
-                history=query.history
-            )
+            # Format messages with history
+            messages = []
             
-            # Extract the actual content from the LLMOutputParser object
-            if hasattr(response, 'content'):
-                return response.content
-            else:
-                return str(response)
+            # Add system message if present
+            if agent_instance.system_prompt:
+                messages.append({"role": "system", "content": agent_instance.system_prompt})
+            
+            ### ___________ Batch Message _____________
+            # # Formulate messages with system prompt
+            # messages = openai_llm.formulate_messages(
+            #     prompts=[query.prompt],
+            #     system_messages=[agent_instance.system_prompt]
+            # )
+            
+            # Add conversation history if provided
+            if query.history:
+                messages.extend(query.history)
+            
+            # # Generate response
+            # try:
+            #     response = openai_llm.single_generate(messages=messages[0])
+            # except Exception as e:
+            #     logger.error(f"Error generating response for agent {agent_id}: {str(e)}")
+            #     raise ValueError(f"Error generating response: {str(e)}")
+            
+            # Add the current user message
+            messages.append({"role": "user", "content": query.prompt})
+  
+            # Generate response using single_generate
+            response = llm.single_generate(messages=messages)
+            return response
             
         except Exception as e:
             logger.error(f"Error querying agent {agent_id}: {str(e)}")

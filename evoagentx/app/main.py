@@ -21,6 +21,7 @@ from evoagentx.app.api import (
     executions_router,
     system_router
 )
+from evoagentx.app.shared import agent_manager
 
 # Configure logging
 logging.basicConfig(
@@ -28,6 +29,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
 
 # Lifespan context manager for startup and shutdown events
 @asynccontextmanager
@@ -42,6 +44,9 @@ async def lifespan(app: FastAPI):
         
         # Initialize users collection and create admin user if not exists
         await init_users_collection()
+        
+        # Initialize the agent manager
+        agent_manager.init_module()
         
         logger.info("Application startup completed successfully")
         yield
