@@ -14,7 +14,7 @@ from evoagentx.app.schemas import (
     WorkflowCreate, WorkflowUpdate, WorkflowResponse,
     ExecutionCreate, ExecutionResponse,
     PaginationParams, SearchParams,
-    Token, UserCreate, UserLogin, UserResponse
+    Token, UserCreate, UserLogin, UserResponse, AgentQueryRequest
 )
 from evoagentx.app.services import AgentService, WorkflowService, WorkflowExecutionService
 from evoagentx.app.security import (
@@ -133,6 +133,52 @@ async def delete_agent(
         return  # With 204, no content is returned
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@agents_router.post("/agents/{agent_id}/query", response_model=Dict[str, Any], tags=["Agents"])
+async def query_agent(
+    agent_id: str,
+    query: AgentQueryRequest,
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """Query an agent with a prompt and get a response."""
+    try:
+        response_text = await AgentService.query_agent(
+            agent_id=agent_id,
+            query=query,
+            user_id=str(current_user["_id"])
+        )
+        return {"response": response_text}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error in query_agent: {str(e)}")
+        # Return a proper error response
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while processing your request: {str(e)}"
+        )
+
+
+# @agents_router.post("/agents/{agent_id}/execute", response_model=Dict[str, Any], tags=["Agents"])
+# async def execute_agent_action(
+#     agent_id: str,
+#     action_name: str,
+#     action_params: Dict[str, Any],
+#     current_user: Dict[str, Any] = Depends(get_current_active_user)
+# ):
+#     """Execute an action using a specific agent."""
+#     result = await AgentService.execute_agent_action(
+#         agent_id=agent_id,
+#         action_name=action_name,
+#         action_params=action_params,
+#         user_id=str(current_user["_id"])
+#     )
+
+#     if not result["success"]:
+#         raise HTTPException(status_code=400, detail=result["error"])
+
+#     return result
 
 # Workflow Routes
 @workflows_router.post("/workflows", response_model=WorkflowResponse,status_code=201, tags=["Workflows"])

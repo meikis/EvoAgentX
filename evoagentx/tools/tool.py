@@ -4,4 +4,7 @@ class Tool(BaseModule):
     """
     An interface for all the tools.
     """
-    pass 
+    pass
+
+    def get_tool_info(self) -> dict:
+        pass

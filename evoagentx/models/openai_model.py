@@ -23,18 +23,29 @@ class OpenAILLM(BaseLLM):
         if self.config.model not in get_openai_model_cost():
             raise KeyError(f"'{self.config.model}' is not a valid OpenAI model name!")
 
-    def formulate_messages(self, prompts: List[str], system_messages: Optional[List[str]] = None) -> List[List[dict]]:
+    def formulate_messages(self, prompts: List[str], system_messages: Optional[List[str]] = None, history: Optional[List[List[dict]]] = None) -> List[List[dict]]:
         
         if system_messages:
             assert len(prompts) == len(system_messages), f"the number of prompts ({len(prompts)}) is different from the number of system_messages ({len(system_messages)})"
         else:
             system_messages = [None] * len(prompts)
+            
+        if history:
+            assert len(prompts) == len(history), f"the number of prompts ({len(prompts)}) is different from the number of history entries ({len(history)})"
+        else:
+            history = [None] * len(prompts)
         
         messages_list = [] 
-        for prompt, system_message in zip(prompts, system_messages):
+        for prompt, system_message, chat_history in zip(prompts, system_messages, history):
             messages = [] 
             if system_message:
                 messages.append({"role": "system", "content": system_message})
+            
+            # Add conversation history if provided
+            if chat_history:
+                messages.extend(chat_history)
+                
+            # Add the current user message
             messages.append({"role": "user", "content": prompt})
             messages_list.append(messages)
 

@@ -6,6 +6,8 @@ import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, Tuple
 from bson import ObjectId
+from evoagentx.models.openai_model import OpenAILLM
+from evoagentx.models.model_configs import OpenAILLMConfig
 
 from evoagentx.app.db import (
     Database, Agent, Workflow, WorkflowExecution, ExecutionLog,
@@ -13,7 +15,7 @@ from evoagentx.app.db import (
 )
 from evoagentx.app.schemas import (
     AgentCreate, AgentUpdate, WorkflowCreate, WorkflowUpdate, 
-    ExecutionCreate, PaginationParams, SearchParams
+    ExecutionCreate, PaginationParams, SearchParams, AgentQueryRequest
 )
 from evoagentx.app.shared import agent_manager
 
@@ -37,11 +39,22 @@ class AgentService:
             raise ValueError(f"Agent with name '{agent_dict['name']}' already exists")
                 
         try:
+            # Create OpenAILLMConfig from the configuration
+            llm_config = OpenAILLMConfig(
+                llm_type=agent_dict["config"]["llm_type"],
+                model=agent_dict["config"]["model"],
+                openai_key=agent_dict["config"]["openai_key"],
+                temperature=agent_dict["config"]["temperature"],
+                max_tokens=agent_dict["config"]["max_tokens"],
+                top_p=agent_dict["config"]["top_p"],
+                output_response=agent_dict["config"]["output_response"]
+            )
+            
             agent_manager.add_agent({
                 "name": agent_dict["name"],
                 "description": agent_dict["description"],
                 "prompt": agent_dict["config"]["prompt"],
-                "llm_config": agent_dict["config"],
+                "llm_config": llm_config,
                 "runtime_params": agent_dict["runtime_params"],
             })
             logger.info(f"Added agent {agent_dict['name']} to AgentManager")
@@ -165,6 +178,91 @@ class AgentService:
         
         agents = await cursor.to_list(length=params.limit)
         return agents, total
+    
+    @staticmethod
+    async def query_agent(agent_id: str, query: AgentQueryRequest, user_id: Optional[str] = None) -> str:
+        """Query an agent with a prompt and get a response."""
+        # Get the agent from database
+        agent_data = await Database.agents.find_one({"_id": ObjectId(agent_id)})
+        if not agent_data:
+            raise ValueError(f"Agent with ID {agent_id} not found")
+
+        try:
+            # Get the agent instance from the manager
+            agent_instance = agent_manager.get_agent(agent_name=agent_data["name"])
+            
+            # Get the model type from config
+            llm_type = agent_instance.llm_config.llm_type.lower()
+            
+            # Initialize the appropriate LLM based on type
+            if llm_type == "openaillm":
+                from evoagentx.models.openai_model import OpenAILLM
+                llm = OpenAILLM(config=agent_instance.llm_config)
+            elif llm_type == "litellm":
+                from evoagentx.models.litellm_model import LiteLLM
+                llm = LiteLLM(config=agent_instance.llm_config)
+            elif llm_type == "siliconflow":
+                from evoagentx.models.siliconflow_model import SiliconFlowLLM
+                llm = SiliconFlowLLM(config=agent_instance.llm_config)
+            else:
+                raise ValueError(f"Unsupported model type: {llm_type}")
+            
+            # Initialize the model
+            llm.init_model()
+            
+            # Generate response
+            response = llm.generate(
+                prompt=query.prompt,
+                system_message=agent_instance.system_prompt,
+                history=query.history
+            )
+            
+            # Extract the actual content from the LLMOutputParser object
+            if hasattr(response, 'content'):
+                return response.content
+            else:
+                return str(response)
+            
+        except Exception as e:
+            logger.error(f"Error querying agent {agent_id}: {str(e)}")
+            raise ValueError(f"Error querying agent: {str(e)}")
+
+    # @staticmethod
+    # async def execute_agent_action(agent_id: str, action_name: str, action_params: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    #     """Execute an action using a specific agent."""
+    #     try:
+    #         # Validate agent ID
+    #         agent = await Database.agents.find_one({"_id": ObjectId(agent_id)})
+    #         if not agent:
+    #             return {"success": False, "error": "Agent not found"}
+
+    #         # Check if the current user is the creator of the agent
+    #         # if agent["created_by"] != user_id:
+    #         #     return {"success": False, "error": "You do not have permission to execute this agent"}
+
+    #         # Retrieve the agent instance from the manager
+    #         agent_instance = agent_manager.get_agent(agent_name=agent["name"])
+
+    #         # Check if the action is valid
+    #         if action_name not in [action.name for action in agent_instance.get_all_actions()]:
+    #             return {"success": False, "error": f"Invalid action '{action_name}' for agent '{agent['name']}', allowed actions: {agent_instance.get_all_actions()}"}
+
+    #         # Execute the action
+    #         result_message = agent_instance.execute(
+    #             action_name=action_name,
+    #             action_input_data=action_params
+    #         )
+
+    #         # Return the result
+    #         return {
+    #             "success": True,
+    #             "result": result_message.content,
+    #             "prompt": result_message.prompt
+    #         }
+
+    #     except Exception as e:
+    #         logger.error(f"Error executing action '{action_name}' for agent '{agent_id}': {str(e)}")
+    #         return {"success": False, "error": f"Internal server error: {str(e)}"}
 
 # Workflow Service
 class WorkflowService:

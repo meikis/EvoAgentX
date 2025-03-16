@@ -166,3 +166,7 @@ class SearchParams(BaseSchema):
     status: Optional[str] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
+
+class AgentQueryRequest(BaseModel):
+    prompt: str
+    history: Optional[List[Dict[str, str]]] = None
