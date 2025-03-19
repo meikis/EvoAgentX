@@ -109,10 +109,56 @@ class AgentService:
             if existing:
                 raise ValueError(f"Agent with name '{update_data['name']}' already exists")
         
+        # Update in database
         await Database.agents.update_one(
             {"_id": ObjectId(agent_id)},
             {"$set": update_data}
         )
+        
+        # Update in agent_manager
+        try:
+            # Get the current agent from manager to preserve its ID
+            current_agent = agent_manager.get_agent(agent_name=agent["name"])
+            agent_id_to_preserve = current_agent.agent_id
+            
+            # Remove old agent from manager
+            agent_manager.remove_agent(agent_name=agent["name"])
+            
+            # Create new config if config was updated
+            if "config" in update_data:
+                llm_config = OpenAILLMConfig(
+                    llm_type=update_data["config"]["llm_type"],
+                    model=update_data["config"]["model"],
+                    openai_key=update_data["config"]["openai_key"],
+                    temperature=update_data["config"]["temperature"],
+                    max_tokens=update_data["config"]["max_tokens"],
+                    top_p=update_data["config"]["top_p"],
+                    output_response=update_data["config"]["output_response"]
+                )
+            else:
+                llm_config = OpenAILLMConfig(
+                    llm_type=agent["config"]["llm_type"],
+                    model=agent["config"]["model"],
+                    openai_key=agent["config"]["openai_key"],
+                    temperature=agent["config"]["temperature"],
+                    max_tokens=agent["config"]["max_tokens"],
+                    top_p=agent["config"]["top_p"],
+                    output_response=agent["config"]["output_response"]
+                )
+            
+            # Add updated agent to manager with preserved ID
+            agent_manager.add_agent({
+                "name": update_data.get("name", agent["name"]),
+                "description": update_data.get("description", agent["description"]),
+                "prompt": update_data.get("config", {}).get("prompt", agent["config"]["prompt"]),
+                "llm_config": llm_config,
+                "runtime_params": update_data.get("runtime_params", agent["runtime_params"]),
+                "agent_id": agent_id_to_preserve  # Preserve the original agent ID
+            })
+            logger.info(f"Updated agent {agent_id} in AgentManager")
+        except Exception as e:
+            logger.error(f"Failed to update agent {agent_id} in AgentManager: {e}")
+            raise ValueError(f"Failed to update agent in AgentManager: {e}")
         
         updated_agent = await Database.agents.find_one({"_id": ObjectId(agent_id)})
         logger.info(f"Updated agent {agent_id}")
@@ -217,24 +263,9 @@ class AgentService:
             if agent_instance.system_prompt:
                 messages.append({"role": "system", "content": agent_instance.system_prompt})
             
-            ### ___________ Batch Message _____________
-            # # Formulate messages with system prompt
-            # messages = openai_llm.formulate_messages(
-            #     prompts=[query.prompt],
-            #     system_messages=[agent_instance.system_prompt]
-            # )
-            
             # Add conversation history if provided
             if query.history:
                 messages.extend(query.history)
-            
-            # # Generate response
-            # try:
-            #     response = openai_llm.single_generate(messages=messages[0])
-            # except Exception as e:
-            #     logger.error(f"Error generating response for agent {agent_id}: {str(e)}")
-            #     raise ValueError(f"Error generating response: {str(e)}")
-            
             # Add the current user message
             messages.append({"role": "user", "content": query.prompt})
   
@@ -282,6 +313,54 @@ class AgentService:
     #     except Exception as e:
     #         logger.error(f"Error executing action '{action_name}' for agent '{agent_id}': {str(e)}")
     #         return {"success": False, "error": f"Internal server error: {str(e)}"}
+
+    @staticmethod
+    async def list_agents_in_manager() -> List[Dict[str, Any]]:
+        """
+        List all agents that are currently running in the AgentManager.
+        
+        Returns:
+            List of agents with their details
+        """
+        # Get all agent names from the AgentManager
+        agent_names = agent_manager.list_agents()
+        
+        results = []
+        
+        # Get details for each agent from the database
+        for agent_name in agent_names:
+            try:
+                # Find the agent in the database
+                agent = await Database.agents.find_one({"name": agent_name})
+                if agent:
+                    # Convert ObjectId to string
+                    agent["_id"] = str(agent["_id"])
+                    results.append(agent)
+                else:
+                    # Agent is in the manager but not in the database
+                    # This should not happen normally, but we'll handle it
+                    agent_instance = agent_manager.get_agent(agent_name=agent_name)
+                    results.append({
+                        "_id": "unknown",
+                        "name": agent_name,
+                        "description": getattr(agent_instance, "description", "Unknown"),
+                        "status": "RUNNING_NOT_IN_DB",
+                        "created_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow()
+                    })
+            except Exception as e:
+                logger.error(f"Error retrieving agent {agent_name}: {str(e)}")
+                # Include minimal information about the agent
+                results.append({
+                    "_id": "error",
+                    "name": agent_name,
+                    "description": f"Error retrieving details: {str(e)}",
+                    "status": "ERROR",
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                })
+        
+        return results
 
 # Workflow Service
 class WorkflowService:
@@ -610,3 +689,365 @@ class WorkflowExecutionService:
         
         logs = await cursor.to_list(length=params.limit)
         return logs, total
+
+class AgentBackupService:
+    @staticmethod
+    async def save_agent_backup(agent_id: str, backup_path: str) -> Dict[str, Any]:
+        """Save an agent's current state to a backup file."""
+        if not ObjectId.is_valid(agent_id):
+            raise ValueError(f"Invalid agent ID: {agent_id}")
+            
+        # Get the agent from database
+        agent = await Database.agents.find_one({"_id": ObjectId(agent_id)})
+        if not agent:
+            raise ValueError(f"Agent with ID {agent_id} not found in database")
+            
+        # Check if agent exists in the AgentManager
+        agent_name = agent["name"]
+        if not agent_manager.has_agent(agent_name):
+            raise ValueError(f"Agent '{agent_name}' is not in the AgentManager (not running)")
+            
+        # Get the agent instance from manager
+        agent_instance = agent_manager.get_agent(agent_name=agent["name"])
+        
+        # Create backup directory if it doesn't exist
+        import os
+        backup_dir = os.path.dirname(backup_path)
+        if backup_dir and not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+        
+        # Save the agent to the specified path
+        try:
+            agent_instance.save_module(path=backup_path)
+            return {
+                "success": True,
+                "message": f"Agent backup saved to {backup_path}",
+                "agent_id": agent_id,
+                "backup_path": backup_path,
+                "agent_name": agent["name"]
+            }
+        except Exception as e:
+            logger.error(f"Failed to save agent backup: {str(e)}")
+            raise ValueError(f"Failed to save agent backup: {str(e)}")
+    
+    @staticmethod
+    async def restore_agent_backup(backup_path: str) -> Dict[str, Any]:
+        """Restore an agent from a backup file and create it in the database."""
+        import os
+        import json
+        import uuid
+        
+        if not os.path.exists(backup_path):
+            raise ValueError(f"Backup file not found: {backup_path}")
+            
+        try:
+            # Load the backup file directly as JSON
+            with open(backup_path, 'r') as f:
+                agent_data = json.load(f)
+                
+            # Basic validation
+            required_fields = ["name", "description"]
+            for field in required_fields:
+                if field not in agent_data:
+                    raise ValueError(f"Missing required field '{field}' in backup file")
+            
+            # Create a new agent with the data from the backup
+            original_name = agent_data["name"]
+            
+            # Remove any existing numeric suffix
+            if '_' in original_name:
+                base_name = original_name.split('_')[0]
+            else:
+                base_name = original_name
+                
+            # Generate a new UUID suffix - use just the last 8 characters
+            uuid_suffix = uuid.uuid4().hex[-8:]
+            new_name = f"{base_name}_{uuid_suffix}"
+            
+            # Get config data from the backup
+            config_data = agent_data.get("llm_config", {})
+            if not config_data and "config" in agent_data:
+                # Try the top-level config if llm_config doesn't exist
+                config_data = agent_data.get("config", {})
+            
+            # Create agent data in the format expected by AgentCreate
+            agent_create = AgentCreate(
+                name=new_name,
+                description=agent_data.get("description", "Restored agent"),
+                config={
+                    "llm_type": config_data.get("llm_type", "OpenAILLM"),
+                    "model": config_data.get("model", "gpt-3.5-turbo"),
+                    "openai_key": config_data.get("openai_key", ""),
+                    "temperature": config_data.get("temperature", 0.7),
+                    "max_tokens": config_data.get("max_tokens", 150),
+                    "top_p": config_data.get("top_p", 0.9),
+                    "output_response": config_data.get("output_response", True),
+                    "prompt": agent_data.get("system_prompt", "You are a helpful assistant.")
+                },
+                runtime_params=agent_data.get("runtime_params", {}),
+                tags=agent_data.get("tags", ["restored"])
+            )
+            
+            # Create the agent using AgentService
+            created_agent = await AgentService.create_agent(
+                agent_data=agent_create,
+                user_id=None  # User ID is not available from the backup
+            )
+            
+            return {
+                "success": True,
+                "message": f"Agent restored from {backup_path} with new name {new_name}",
+                "agent_id": str(created_agent["_id"]),
+                "backup_path": backup_path,
+                "agent_name": created_agent["name"]
+            }
+        except Exception as e:
+            logger.error(f"Failed to restore agent from backup: {str(e)}")
+            raise ValueError(f"Failed to restore agent from backup: {str(e)}")
+    
+    @staticmethod
+    async def list_agent_backups(agent_id: str, backup_dir: str) -> List[Dict[str, Any]]:
+        """List all backup files for an agent."""
+        if not ObjectId.is_valid(agent_id):
+            raise ValueError(f"Invalid agent ID: {agent_id}")
+            
+        # Get the agent from database
+        agent = await Database.agents.find_one({"_id": ObjectId(agent_id)})
+        if not agent:
+            raise ValueError(f"Agent with ID {agent_id} not found")
+            
+        try:
+            import os
+            import glob
+            
+            # Create backup directory if it doesn't exist
+            if not os.path.exists(backup_dir):
+                os.makedirs(backup_dir)
+            
+            # Get all backup files for this agent
+            backup_pattern = os.path.join(backup_dir, f"{agent['name']}_*.json")
+            backup_files = glob.glob(backup_pattern)
+            
+            # Get file details
+            backups = []
+            for file_path in backup_files:
+                file_stat = os.stat(file_path)
+                backups.append({
+                    "path": file_path,
+                    "created_at": datetime.fromtimestamp(file_stat.st_ctime),
+                    "size": file_stat.st_size
+                })
+            
+            # Sort by creation date, newest first
+            backups.sort(key=lambda x: x["created_at"], reverse=True)
+            
+            return backups
+        except Exception as e:
+            logger.error(f"Failed to list agent backups: {str(e)}")
+            raise ValueError(f"Failed to list agent backups: {str(e)}")
+    
+    @staticmethod
+    async def backup_all_agents(backup_dir: str) -> Dict[str, Any]:
+        """
+        Backup all agents in the AgentManager to the specified directory.
+        
+        Args:
+            backup_dir: Directory where agent backups will be stored
+            
+        Returns:
+            Dict with results of the batch backup operation
+        """
+        import os
+        
+        # Create backup directory if it doesn't exist
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+            
+        # Get all agent names from the AgentManager
+        agent_names = agent_manager.list_agents()
+        
+        results = []
+        success_count = 0
+        error_count = 0
+        
+        # Backup each agent in the AgentManager
+        for agent_name in agent_names:
+            try:
+                # Find the agent in the database
+                agent = await Database.agents.find_one({"name": agent_name})
+                if not agent:
+                    results.append({
+                        "success": False,
+                        "agent_name": agent_name,
+                        "error": f"Agent '{agent_name}' found in AgentManager but not in database"
+                    })
+                    error_count += 1
+                    continue
+                
+                agent_id = str(agent["_id"])
+                backup_path = os.path.join(backup_dir, f"{agent_name}_backup.json")
+                
+                result = await AgentBackupService.save_agent_backup(agent_id, backup_path)
+                results.append(result)
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Failed to back up agent {agent_name}: {str(e)}")
+                results.append({
+                    "success": False,
+                    "agent_name": agent_name,
+                    "error": str(e)
+                })
+                error_count += 1
+                
+        return {
+            "success": error_count == 0,
+            "total": len(agent_names),
+            "successful": success_count,
+            "failed": error_count,
+            "backup_dir": backup_dir,
+            "results": results
+        }
+        
+    @staticmethod
+    async def backup_agents(agent_ids: List[str], backup_dir: str) -> Dict[str, Any]:
+        """
+        Backup specific agents to the specified directory, only if they exist in the AgentManager.
+        
+        Args:
+            agent_ids: List of agent IDs to back up
+            backup_dir: Directory where agent backups will be stored
+            
+        Returns:
+            Dict with results of the batch backup operation
+        """
+        import os
+        
+        # Create backup directory if it doesn't exist
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+            
+        results = []
+        success_count = 0
+        error_count = 0
+        
+        # Get all agent names in the AgentManager
+        agent_names_in_manager = agent_manager.list_agents()
+        
+        # Backup each specified agent
+        for agent_id in agent_ids:
+            try:
+                # Get agent from DB to get its name
+                agent = await Database.agents.find_one({"_id": ObjectId(agent_id)})
+                if not agent:
+                    results.append({
+                        "success": False,
+                        "agent_id": agent_id,
+                        "error": f"Agent with ID {agent_id} not found in database"
+                    })
+                    error_count += 1
+                    continue
+                    
+                agent_name = agent["name"]
+                
+                # Check if agent is in the AgentManager
+                if agent_name not in agent_names_in_manager:
+                    results.append({
+                        "success": False,
+                        "agent_id": agent_id,
+                        "agent_name": agent_name,
+                        "error": f"Agent '{agent_name}' is not in the AgentManager (not running)"
+                    })
+                    error_count += 1
+                    continue
+                
+                backup_path = os.path.join(backup_dir, f"{agent_name}_backup.json")
+                
+                result = await AgentBackupService.save_agent_backup(agent_id, backup_path)
+                results.append(result)
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Failed to back up agent {agent_id}: {str(e)}")
+                results.append({
+                    "success": False,
+                    "agent_id": agent_id,
+                    "error": str(e)
+                })
+                error_count += 1
+                
+        return {
+            "success": error_count == 0,
+            "total": len(agent_ids),
+            "successful": success_count,
+            "failed": error_count,
+            "backup_dir": backup_dir,
+            "results": results
+        }
+        
+    @staticmethod
+    async def restore_agents_from_files(backup_files: List[str]) -> Dict[str, Any]:
+        """
+        Restore multiple agents from a list of backup files.
+        
+        Args:
+            backup_files: List of paths to agent backup files
+            
+        Returns:
+            Dict with results of the batch restore operation
+        """
+        results = []
+        success_count = 0
+        error_count = 0
+        
+        # Restore each agent from the provided backup files
+        for backup_path in backup_files:
+            try:
+                result = await AgentBackupService.restore_agent_backup(backup_path)
+                results.append(result)
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Failed to restore agent from {backup_path}: {str(e)}")
+                results.append({
+                    "success": False,
+                    "backup_path": backup_path,
+                    "error": str(e)
+                })
+                error_count += 1
+                
+        return {
+            "success": error_count == 0,
+            "total": len(backup_files),
+            "successful": success_count,
+            "failed": error_count,
+            "results": results
+        }
+        
+    @staticmethod
+    async def restore_all_agents_from_directory(backup_dir: str) -> Dict[str, Any]:
+        """
+        Restore all agents from backup files in a directory.
+        
+        Args:
+            backup_dir: Directory containing agent backup files
+            
+        Returns:
+            Dict with results of the batch restore operation
+        """
+        import os
+        import glob
+        
+        # Check if directory exists
+        if not os.path.exists(backup_dir):
+            raise ValueError(f"Backup directory not found: {backup_dir}")
+            
+        # Find all JSON files in the directory
+        backup_files = glob.glob(os.path.join(backup_dir, "*.json"))
+        
+        if not backup_files:
+            return {
+                "success": True,
+                "total": 0,
+                "message": f"No backup files found in {backup_dir}"
+            }
+            
+        # Restore all agents from the found backup files
+        return await AgentBackupService.restore_agents_from_files(backup_files)

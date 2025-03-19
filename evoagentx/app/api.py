@@ -16,7 +16,7 @@ from evoagentx.app.schemas import (
     PaginationParams, SearchParams,
     Token, UserCreate, UserLogin, UserResponse, AgentQueryRequest
 )
-from evoagentx.app.services import AgentService, WorkflowService, WorkflowExecutionService
+from evoagentx.app.services import AgentService, WorkflowService, WorkflowExecutionService, AgentBackupService
 from evoagentx.app.security import (
     create_access_token, 
     authenticate_user, 
@@ -159,6 +159,119 @@ async def query_agent(
             detail=f"An error occurred while processing your request: {str(e)}"
         )
 
+@agents_router.post("/agents/{agent_id}/backup", response_model=Dict[str, Any], tags=["Agents"])
+async def create_agent_backup(
+    agent_id: str,
+    backup_path: str,
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """Create a backup of an agent's current state."""
+    try:
+        result = await AgentBackupService.save_agent_backup(agent_id, backup_path)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@agents_router.post("/agents/restore", response_model=Dict[str, Any], tags=["Agents"])
+async def restore_agent_backup(
+    backup_path: str,
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """Restore an agent from a backup file."""
+    try:
+        result = await AgentBackupService.restore_agent_backup(backup_path)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@agents_router.get("/agents/{agent_id}/backups", response_model=List[Dict[str, Any]], tags=["Agents"])
+async def list_agent_backups(
+    agent_id: str,
+    backup_dir: str,
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """List all backup files for an agent."""
+    try:
+        backups = await AgentBackupService.list_agent_backups(agent_id, backup_dir)
+        return backups
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@agents_router.post("/agents/backup-all", response_model=Dict[str, Any], tags=["Agents"])
+async def backup_all_agents(
+    backup_dir: str,
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """Backup all agents in the system to the specified directory."""
+    try:
+        result = await AgentBackupService.backup_all_agents(backup_dir)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@agents_router.post("/agents/backup-batch", response_model=Dict[str, Any], tags=["Agents"])
+async def backup_multiple_agents(
+    agent_ids: List[str],
+    backup_dir: str,
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """Backup multiple agents to the specified directory."""
+    try:
+        result = await AgentBackupService.backup_agents(agent_ids, backup_dir)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@agents_router.post("/agents/restore-batch", response_model=Dict[str, Any], tags=["Agents"])
+async def restore_multiple_agents(
+    backup_files: List[str],
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """Restore multiple agents from backup files."""
+    try:
+        result = await AgentBackupService.restore_agents_from_files(backup_files)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@agents_router.post("/agents/restore-all", response_model=Dict[str, Any], tags=["Agents"])
+async def restore_all_agents(
+    backup_dir: str,
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """Restore all agents from backup files in a directory."""
+    try:
+        result = await AgentBackupService.restore_all_agents_from_directory(backup_dir)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@agents_router.get("/agents/running", response_model=List[Dict[str, Any]], tags=["Agents"])
+async def list_running_agents(
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """List all agents that are currently running in the AgentManager."""
+    try:
+        agents = await AgentService.list_agents_in_manager()
+        return agents
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # @agents_router.post("/agents/{agent_id}/execute", response_model=Dict[str, Any], tags=["Agents"])
 # async def execute_agent_action(
