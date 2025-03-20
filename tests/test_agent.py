@@ -18,8 +18,7 @@ from evoagentx.prompts.requirement_collection import REQUIREMENT_COLLECTION_PROM
 
 # Base API URL configuration
 BASE_URL = "http://localhost:8000/api/v1/"
-# OPENAI_API_KEY="sample"
-OPENAI_API_KEY="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"
+OPENAI_API_KEY="sample"
 
 # --- Helper functions --- #
 async def create_agent(client: httpx.AsyncClient, headers: dict, payload: dict) -> str:
