@@ -109,58 +109,69 @@ class AgentService:
             if existing:
                 raise ValueError(f"Agent with name '{update_data['name']}' already exists")
         
+        # Handle partial config updates
+        if "config" in update_data and isinstance(update_data["config"], dict) and isinstance(agent.get("config"), dict):
+            # Instead of replacing the entire config, merge the updated fields with existing ones
+            merged_config = agent["config"].copy()
+            for key, value in update_data["config"].items():
+                merged_config[key] = value
+            update_data["config"] = merged_config
+            logger.info(f"Merged config update for agent {agent_id}: {update_data['config']}")
+        
         # Update in database
         await Database.agents.update_one(
             {"_id": ObjectId(agent_id)},
             {"$set": update_data}
         )
         
-        # Update in agent_manager
+        # Get the updated agent with all fields merged
+        updated_agent = await Database.agents.find_one({"_id": ObjectId(agent_id)})
+        
+        # Update in agent_manager if it exists there
+        agent_id_to_preserve = None
         try:
-            # Get the current agent from manager to preserve its ID
-            current_agent = agent_manager.get_agent(agent_name=agent["name"])
-            agent_id_to_preserve = current_agent.agent_id
+            # Check if agent exists in manager
+            agent_exists_in_manager = agent_manager.has_agent(agent_name=agent["name"])
             
-            # Remove old agent from manager
-            agent_manager.remove_agent(agent_name=agent["name"])
+            if agent_exists_in_manager:
+                # Get the current agent from manager to preserve its ID
+                current_agent = agent_manager.get_agent(agent_name=agent["name"])
+                agent_id_to_preserve = current_agent.agent_id
+                
+                # Remove old agent from manager
+                agent_manager.remove_agent(agent_name=agent["name"])
             
-            # Create new config if config was updated
-            if "config" in update_data:
-                llm_config = OpenAILLMConfig(
-                    llm_type=update_data["config"]["llm_type"],
-                    model=update_data["config"]["model"],
-                    openai_key=update_data["config"]["openai_key"],
-                    temperature=update_data["config"]["temperature"],
-                    max_tokens=update_data["config"]["max_tokens"],
-                    top_p=update_data["config"]["top_p"],
-                    output_response=update_data["config"]["output_response"]
-                )
-            else:
-                llm_config = OpenAILLMConfig(
-                    llm_type=agent["config"]["llm_type"],
-                    model=agent["config"]["model"],
-                    openai_key=agent["config"]["openai_key"],
-                    temperature=agent["config"]["temperature"],
-                    max_tokens=agent["config"]["max_tokens"],
-                    top_p=agent["config"]["top_p"],
-                    output_response=agent["config"]["output_response"]
-                )
+            # Create config
+            llm_config = OpenAILLMConfig(
+                llm_type=updated_agent["config"]["llm_type"],
+                model=updated_agent["config"]["model"],
+                openai_key=updated_agent["config"]["openai_key"],
+                temperature=updated_agent["config"]["temperature"],
+                max_tokens=updated_agent["config"]["max_tokens"],
+                top_p=updated_agent["config"]["top_p"],
+                output_response=updated_agent["config"]["output_response"]
+            )
             
-            # Add updated agent to manager with preserved ID
-            agent_manager.add_agent({
-                "name": update_data.get("name", agent["name"]),
-                "description": update_data.get("description", agent["description"]),
-                "prompt": update_data.get("config", {}).get("prompt", agent["config"]["prompt"]),
+            # Add updated agent to manager with preserved ID if it existed before
+            agent_dict = {
+                "name": updated_agent["name"],
+                "description": updated_agent["description"],
+                "prompt": updated_agent["config"]["prompt"],
                 "llm_config": llm_config,
-                "runtime_params": update_data.get("runtime_params", agent["runtime_params"]),
-                "agent_id": agent_id_to_preserve  # Preserve the original agent ID
-            })
+                "runtime_params": updated_agent["runtime_params"]
+            }
+            
+            # Add the agent_id only if we had one before
+            if agent_id_to_preserve:
+                agent_dict["agent_id"] = agent_id_to_preserve
+                
+            agent_manager.add_agent(agent_dict)
             logger.info(f"Updated agent {agent_id} in AgentManager")
         except Exception as e:
             logger.error(f"Failed to update agent {agent_id} in AgentManager: {e}")
-            raise ValueError(f"Failed to update agent in AgentManager: {e}")
+            # Don't raise an error here - we want the database update to succeed
+            # even if the agent_manager update fails
         
-        updated_agent = await Database.agents.find_one({"_id": ObjectId(agent_id)})
         logger.info(f"Updated agent {agent_id}")
         
         return updated_agent
@@ -313,54 +324,6 @@ class AgentService:
     #     except Exception as e:
     #         logger.error(f"Error executing action '{action_name}' for agent '{agent_id}': {str(e)}")
     #         return {"success": False, "error": f"Internal server error: {str(e)}"}
-
-    @staticmethod
-    async def list_agents_in_manager() -> List[Dict[str, Any]]:
-        """
-        List all agents that are currently running in the AgentManager.
-        
-        Returns:
-            List of agents with their details
-        """
-        # Get all agent names from the AgentManager
-        agent_names = agent_manager.list_agents()
-        
-        results = []
-        
-        # Get details for each agent from the database
-        for agent_name in agent_names:
-            try:
-                # Find the agent in the database
-                agent = await Database.agents.find_one({"name": agent_name})
-                if agent:
-                    # Convert ObjectId to string
-                    agent["_id"] = str(agent["_id"])
-                    results.append(agent)
-                else:
-                    # Agent is in the manager but not in the database
-                    # This should not happen normally, but we'll handle it
-                    agent_instance = agent_manager.get_agent(agent_name=agent_name)
-                    results.append({
-                        "_id": "unknown",
-                        "name": agent_name,
-                        "description": getattr(agent_instance, "description", "Unknown"),
-                        "status": "RUNNING_NOT_IN_DB",
-                        "created_at": datetime.utcnow(),
-                        "updated_at": datetime.utcnow()
-                    })
-            except Exception as e:
-                logger.error(f"Error retrieving agent {agent_name}: {str(e)}")
-                # Include minimal information about the agent
-                results.append({
-                    "_id": "error",
-                    "name": agent_name,
-                    "description": f"Error retrieving details: {str(e)}",
-                    "status": "ERROR",
-                    "created_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow()
-                })
-        
-        return results
 
 # Workflow Service
 class WorkflowService:

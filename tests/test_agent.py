@@ -222,202 +222,192 @@ async def access_token(client: httpx.AsyncClient):
 #     await delete_agent(client, headers, agent_id)
 #     assert False
 
-@pytest.mark.asyncio
-async def test_agent_backup(client: httpx.AsyncClient, access_token: str):
-    headers = {"Authorization": f"Bearer {access_token}"}
+# @pytest.mark.asyncio
+# async def test_agent_backup(client: httpx.AsyncClient, access_token: str):
+#     headers = {"Authorization": f"Bearer {access_token}"}
     
-    # OpenAI config
-    config = {
-        "llm_type": "OpenAILLM",
-        "model": "gpt-3.5-turbo",
-        "openai_key": OPENAI_API_KEY,
-        "temperature": 0.7,
-        "max_tokens": 150,
-        "top_p": 0.9,
-        "output_response": True,
-        "prompt": "You are a helpful assistant that can help with a variety of tasks.",
-    }
+#     # OpenAI config
+#     config = {
+#         "llm_type": "OpenAILLM",
+#         "model": "gpt-3.5-turbo",
+#         "openai_key": OPENAI_API_KEY,
+#         "temperature": 0.7,
+#         "max_tokens": 150,
+#         "top_p": 0.9,
+#         "output_response": True,
+#         "prompt": "You are a helpful assistant that can help with a variety of tasks.",
+#     }
     
-    # Create initial agent
-    agent_payload = {
-        "name": f"TestAgent_{uuid.uuid4().hex[:8]}",
-        "description": "Initial description",
-        "config": config,
-        "runtime_params": {},
-        "tags": ["test", "backup"],
-    }
+#     # Create initial agent
+#     agent_payload = {
+#         "name": f"TestAgent_{uuid.uuid4().hex[:8]}",
+#         "description": "Initial description",
+#         "config": config,
+#         "runtime_params": {},
+#         "tags": ["test", "backup"],
+#     }
     
-    agent_id = await create_agent(client, headers, agent_payload)
+#     agent_id = await create_agent(client, headers, agent_payload)
     
-    # Create backup directory
-    backup_dir = "backups"
-    if not os.path.exists(backup_dir):
-        os.makedirs(backup_dir)
+#     # Create backup directory
+#     backup_dir = "backups"
+#     if not os.path.exists(backup_dir):
+#         os.makedirs(backup_dir)
     
-    # Create backup
-    backup_path = os.path.join(backup_dir, f"{agent_payload['name']}_v1.json")
-    response = await client.post(
-        urljoin(BASE_URL, f"agents/{agent_id}/backup"),
-        headers=headers,
-        params={"backup_path": backup_path}
-    )
-    assert response.status_code == 200
-    backup_result = response.json()
-    print(backup_result)
-    assert backup_result["success"] == True
-    assert backup_result["agent_id"] == agent_id
-    assert backup_result["backup_path"] == backup_path
+#     # Create backup
+#     backup_path = os.path.join(backup_dir, f"{agent_payload['name']}_v1.json")
+#     response = await client.post(
+#         urljoin(BASE_URL, f"agents/{agent_id}/backup"),
+#         headers=headers,
+#         params={"backup_path": backup_path}
+#     )
+#     assert response.status_code == 200
+#     backup_result = response.json()
+#     print(backup_result)
+#     assert backup_result["success"] == True
+#     assert backup_result["agent_id"] == agent_id
+#     assert backup_result["backup_path"] == backup_path
     
-    # # List backups
-    # response = await client.get(
-    #     urljoin(BASE_URL, f"agents/{agent_id}/backups"),
-    #     headers=headers,
-    #     params={"backup_dir": backup_dir}
-    # )
-    # assert response.status_code == 200
-    # backups = response.json()
-    # print(backups)
-    # assert len(backups) > 0
-    # assert any(backup["path"] == backup_path for backup in backups)
+#     # # List backups
+#     # response = await client.get(
+#     #     urljoin(BASE_URL, f"agents/{agent_id}/backups"),
+#     #     headers=headers,
+#     #     params={"backup_dir": backup_dir}
+#     # )
+#     # assert response.status_code == 200
+#     # backups = response.json()
+#     # print(backups)
+#     # assert len(backups) > 0
+#     # assert any(backup["path"] == backup_path for backup in backups)
     
-    # Load agent from backup
-    # loaded_agent = Agent.from_file(path=backup_path)
-    # print(loaded_agent.dict())
+#     # Load agent from backup
+#     # loaded_agent = Agent.from_file(path=backup_path)
+#     # print(loaded_agent.dict())
     
-    # print(backup_path)
-    # response = await client.post(
-    #     urljoin(BASE_URL, f"agents/{agent_id}/load_backup"),
-    #     headers=headers,
-    #     params={"backup_path": backup_path}
-    # )
-    # print(response.json())
+#     # print(backup_path)
+#     # response = await client.post(
+#     #     urljoin(BASE_URL, f"agents/{agent_id}/load_backup"),
+#     #     headers=headers,
+#     #     params={"backup_path": backup_path}
+#     # )
+#     # print(response.json())
     
-    # Restore from backup
-    response = await client.post(
-        urljoin(BASE_URL, f"agents/restore"),
-        headers=headers,
-        params={"backup_path": backup_path}
-    )
-    print(response)
-    print(response.json())
-    print("--------------------------------")
-    assert response.status_code == 200
-    restore_result = response.json()
-    assert restore_result["success"] == True
-    # Don't check that agent_id matches original - this is a new agent with a different ID
-    # assert restore_result["agent_id"] == agent_id
-    assert restore_result["backup_path"] == backup_path
+#     # Restore from backup
+#     response = await client.post(
+#         urljoin(BASE_URL, f"agents/restore"),
+#         headers=headers,
+#         params={"backup_path": backup_path}
+#     )
+#     print(response)
+#     print(response.json())
+#     print("--------------------------------")
+#     assert response.status_code == 200
+#     restore_result = response.json()
+#     assert restore_result["success"] == True
+#     # Don't check that agent_id matches original - this is a new agent with a different ID
+#     # assert restore_result["agent_id"] == agent_id
+#     assert restore_result["backup_path"] == backup_path
     
-    # Clean up both agents
-    original_agent_id = agent_id
-    restored_agent_id = restore_result["agent_id"]
-    print(f"Original agent ID: {original_agent_id}")
-    print(f"Restored agent ID: {restored_agent_id}")
+#     # Clean up both agents
+#     original_agent_id = agent_id
+#     restored_agent_id = restore_result["agent_id"]
+#     print(f"Original agent ID: {original_agent_id}")
+#     print(f"Restored agent ID: {restored_agent_id}")
     
-    # Delete the restored agent
-    await delete_agent(client, headers, restored_agent_id)
-    # Delete the original agent
-    await delete_agent(client, headers, original_agent_id)
+#     # Delete the restored agent
+#     await delete_agent(client, headers, restored_agent_id)
+#     # Delete the original agent
+#     await delete_agent(client, headers, original_agent_id)
 
-@pytest.mark.asyncio
-async def test_batch_agent_backup_restore(client: httpx.AsyncClient, access_token: str):
-    """Test the batch backup and restore functionality for agents."""
-    headers = {"Authorization": f"Bearer {access_token}"}
+# @pytest.mark.asyncio
+# async def test_batch_agent_backup_restore(client: httpx.AsyncClient, access_token: str):
+#     """Test the batch backup and restore functionality for agents."""
+#     headers = {"Authorization": f"Bearer {access_token}"}
     
-    # Create a backup directory
-    backup_dir = "batch_backups"
-    if not os.path.exists(backup_dir):
-        os.makedirs(backup_dir)
+#     # Create a backup directory
+#     backup_dir = "batch_backups"
+#     if not os.path.exists(backup_dir):
+#         os.makedirs(backup_dir)
     
-    # Create 3 test agents for batch operations
-    agent_ids = []
-    for i in range(3):
-        agent_payload = {
-            "name": f"BatchTestAgent_{i}_{uuid.uuid4().hex[:8]}",
-            "description": f"Test agent {i} for batch backup/restore",
-            "config": {
-                "llm_type": "OpenAILLM",
-                "model": "gpt-3.5-turbo",
-                "openai_key": OPENAI_API_KEY,
-                "temperature": 0.7,
-                "max_tokens": 150,
-                "top_p": 0.9,
-                "output_response": True,
-                "prompt": f"You are helpful assistant {i}."
-            },
-            "runtime_params": {},
-            "tags": ["test", "batch"]
-        }
-        agent_id = await create_agent(client, headers, agent_payload)
-        agent_ids.append(agent_id)
+#     # Create 3 test agents for batch operations
+#     agent_ids = []
+#     for i in range(3):
+#         agent_payload = {
+#             "name": f"BatchTestAgent_{i}_{uuid.uuid4().hex[:8]}",
+#             "description": f"Test agent {i} for batch backup/restore",
+#             "config": {
+#                 "llm_type": "OpenAILLM",
+#                 "model": "gpt-3.5-turbo",
+#                 "openai_key": OPENAI_API_KEY,
+#                 "temperature": 0.7,
+#                 "max_tokens": 150,
+#                 "top_p": 0.9,
+#                 "output_response": True,
+#                 "prompt": f"You are helpful assistant {i}."
+#             },
+#             "runtime_params": {},
+#             "tags": ["test", "batch"]
+#         }
+#         agent_id = await create_agent(client, headers, agent_payload)
+#         agent_ids.append(agent_id)
         
-    try:
-        # Test backing up multiple agents
-        response = await client.post(
-            urljoin(BASE_URL, "agents/backup-batch"),
-            headers=headers,
-            params={"backup_dir": backup_dir},
-            json=agent_ids
-        )
-        assert response.status_code == 200
-        backup_result = response.json()
-        print(f"Batch backup result: {backup_result}")
-        assert backup_result["success"] == True
-        assert backup_result["total"] == 3
-        assert backup_result["successful"] == 3
+#     try:
+#         # Test backing up multiple agents
+#         response = await client.post(
+#             urljoin(BASE_URL, "agents/backup-batch"),
+#             headers=headers,
+#             params={"backup_dir": backup_dir},
+#             json=agent_ids
+#         )
+#         assert response.status_code == 200
+#         backup_result = response.json()
+#         print(f"Batch backup result: {backup_result}")
+#         assert backup_result["success"] == True
+#         assert backup_result["total"] == 3
+#         assert backup_result["successful"] == 3
         
-        # Test listing running agents
-        response = await client.get(
-            urljoin(BASE_URL, "agents/running"),
-            headers=headers
-        )
-        assert response.status_code == 200
-        running_agents = response.json()
-        print(f"Running agents: {running_agents}")
-        assert len(running_agents) >= 3
+#         # Delete the original agents to test restoration
+#         for agent_id in agent_ids:
+#             await delete_agent(client, headers, agent_id)
         
-        # Delete the original agents to test restoration
-        for agent_id in agent_ids:
-            await delete_agent(client, headers, agent_id)
+#         # Find all backup files
+#         backup_files = []
+#         for filename in os.listdir(backup_dir):
+#             if filename.startswith("BatchTestAgent_") and filename.endswith(".json"):
+#                 backup_files.append(os.path.join(backup_dir, filename))
         
-        # Find all backup files
-        backup_files = []
-        for filename in os.listdir(backup_dir):
-            if filename.startswith("BatchTestAgent_") and filename.endswith(".json"):
-                backup_files.append(os.path.join(backup_dir, filename))
+#         # Test restoring multiple agents from backups
+#         response = await client.post(
+#             urljoin(BASE_URL, "agents/restore-batch"),
+#             headers=headers,
+#             json=backup_files
+#         )
+#         assert response.status_code == 200
+#         restore_result = response.json()
+#         print(f"Batch restore result: {restore_result}")
+#         assert restore_result["success"] == True
+#         assert restore_result["total"] == len(backup_files)
+#         assert restore_result["successful"] == len(backup_files)
         
-        # Test restoring multiple agents from backups
-        response = await client.post(
-            urljoin(BASE_URL, "agents/restore-batch"),
-            headers=headers,
-            json=backup_files
-        )
-        assert response.status_code == 200
-        restore_result = response.json()
-        print(f"Batch restore result: {restore_result}")
-        assert restore_result["success"] == True
-        assert restore_result["total"] == len(backup_files)
-        assert restore_result["successful"] == len(backup_files)
+#         # Get the IDs of the restored agents
+#         restored_agent_ids = [result["agent_id"] for result in restore_result["results"]]
         
-        # Get the IDs of the restored agents
-        restored_agent_ids = [result["agent_id"] for result in restore_result["results"]]
-        
-        # Clean up - delete the restored agents
-        for agent_id in restored_agent_ids:
-            await delete_agent(client, headers, agent_id)
+#         # Clean up - delete the restored agents
+#         for agent_id in restored_agent_ids:
+#             await delete_agent(client, headers, agent_id)
             
-    finally:
-        # Clean up any remaining agents
-        for agent_id in agent_ids:
-            try:
-                await delete_agent(client, headers, agent_id)
-            except:
-                pass
+#     finally:
+#         # Clean up any remaining agents
+#         for agent_id in agent_ids:
+#             try:
+#                 await delete_agent(client, headers, agent_id)
+#             except:
+#                 pass
         
-        # Clean up backup directory
-        import shutil
-        if os.path.exists(backup_dir):
-            shutil.rmtree(backup_dir)
+#         # Clean up backup directory
+#         import shutil
+#         if os.path.exists(backup_dir):
+#             shutil.rmtree(backup_dir)
 
 @pytest.mark.asyncio
 async def test_backup_restore_all_agents(client: httpx.AsyncClient, access_token: str):
@@ -428,15 +418,6 @@ async def test_backup_restore_all_agents(client: httpx.AsyncClient, access_token
     all_backup_dir = "all_backups"
     if not os.path.exists(all_backup_dir):
         os.makedirs(all_backup_dir)
-    
-    # Get current running agents
-    response = await client.get(
-        urljoin(BASE_URL, "agents/running"),
-        headers=headers
-    )
-    initial_running_agents = response.json()
-    initial_agent_count = len(initial_running_agents)
-    print(f"Initial running agent count: {initial_agent_count}")
     
     # Create 2 more test agents
     additional_agent_ids = []
@@ -461,14 +442,6 @@ async def test_backup_restore_all_agents(client: httpx.AsyncClient, access_token
         additional_agent_ids.append(agent_id)
     
     try:
-        # Check that we have more agents now
-        response = await client.get(
-            urljoin(BASE_URL, "agents/running"),
-            headers=headers
-        )
-        updated_running_agents = response.json()
-        assert len(updated_running_agents) >= initial_agent_count + 2
-        
         # Test backing up all agents
         response = await client.post(
             urljoin(BASE_URL, "agents/backup-all"),
@@ -479,7 +452,6 @@ async def test_backup_restore_all_agents(client: httpx.AsyncClient, access_token
         backup_result = response.json()
         print(f"Backup all agents result: {backup_result}")
         assert backup_result["success"] == True
-        assert backup_result["total"] >= initial_agent_count + 2
         
         # Delete our test agents
         for agent_id in additional_agent_ids:

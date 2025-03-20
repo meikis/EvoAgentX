@@ -260,19 +260,6 @@ async def restore_all_agents(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@agents_router.get("/agents/running", response_model=List[Dict[str, Any]], tags=["Agents"])
-async def list_running_agents(
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
-):
-    """List all agents that are currently running in the AgentManager."""
-    try:
-        agents = await AgentService.list_agents_in_manager()
-        return agents
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 # @agents_router.post("/agents/{agent_id}/execute", response_model=Dict[str, Any], tags=["Agents"])
 # async def execute_agent_action(
 #     agent_id: str,
