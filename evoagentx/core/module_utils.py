@@ -176,13 +176,17 @@ def parse_json_from_llm_output(text: str) -> dict:
         raise ValueError(f"The follwoing generated text does not contain JSON string!\n{text}")
     return data
 
-def extract_code_blocks(text):
+def extract_code_blocks(text: str) -> List[str]:
 
     # Regular expression to match code blocks enclosed in triple backticks
     code_block_pattern = r"```(?:[a-zA-Z]*)?\n*(.*?)\n*```"
     # Find all matches in the text
     code_blocks = regex.findall(code_block_pattern, text, regex.DOTALL)
 
+    # if no code blocks are found, return the text itself 
+    if not code_blocks:
+        return [text.strip()]
+    
     return code_blocks
 
 def remove_repr_quotes(json_string):

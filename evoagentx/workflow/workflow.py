@@ -1,5 +1,4 @@
 import inspect
-from time import sleep
 from pydantic import Field
 from typing import Optional
 from ..core.logging import logger
@@ -34,22 +33,6 @@ class WorkFlow(BaseModule):
             self.workflow_manager = WorkFlowManager(llm=self.llm)
 
     def execute(self, inputs: dict = {}, **kwargs) -> str:
-        """
-        Execute the workflow in a loop:
-            - Check whether the workflow is completed. If the workflow is completed or there is failed task, stop execution.
-            - Use self.workflow_manager.schedule_next_task to get the next task. 
-            - Use self.graph.set_node_state to set the state of that task node as WorkFlowNodeState.RUNNING.
-            - Use self.workflow_manager.schedule_next_action to execute (multiple) action(s) to finish this task:
-                - schedule_next_action will return an NextAction object
-                - Obtain the agent from self.agent_manager, set the agent state to AgentState.RUNNING, 
-                    initialize a new short_term_memory if the agent is new in current ``workflow''. 
-                    retrieve all relevant context from environment and execute the action.
-                - Publish the action result to self.environment
-                - Set the agent state to AgentState.AVAILABLE. 
-            - Use self.graph.set_node_state to update the state of the task.
-            - If the state of the current task is WorkFlowNodeState.FAILED, stop execution and return the error message. 
-        If the workflow is successfully executed, update the agent's long_term_memory based on the short_term_memory.
-        """
 
         goal = self.graph.goal
         inputs.update({"goal": goal})
@@ -128,19 +111,23 @@ class WorkFlow(BaseModule):
         
         while next_action:
             agent: Agent = self.agent_manager.get_agent(agent_name=next_action.agent)
-            while self.agent_manager.get_agent_state(agent_name=agent.name) != AgentState.AVAILABLE:
-                sleep(5)
+            # while self.agent_manager.get_agent_state(agent_name=agent.name) != AgentState.AVAILABLE:
+            #     sleep(5)
+            if not self.agent_manager.wait_for_agent_available(agent_name=agent.name, timeout=300):
+                raise TimeoutError(f"Timeout waiting for agent {agent.name} to become available")
             self.agent_manager.set_agent_state(agent_name=next_action.agent, new_state=AgentState.RUNNING)
-            message = agent.execute(
-                action_name=next_action.action,
-                action_input_data=self.environment.get_all_execution_data(),
-                return_msg_type=MessageType.RESPONSE, 
-                wf_goal=self.graph.goal,
-                wf_task=task.name, 
-                wf_task_desc=task.description
-            )
-            self.agent_manager.set_agent_state(agent_name=next_action.agent, new_state=AgentState.AVAILABLE)
-            self.environment.update(message=message, state=TrajectoryState.COMPLETED)
+            try:
+                message = agent.execute(
+                    action_name=next_action.action,
+                    action_input_data=self.environment.get_all_execution_data(),
+                    return_msg_type=MessageType.RESPONSE, 
+                    wf_goal=self.graph.goal,
+                    wf_task=task.name, 
+                    wf_task_desc=task.description
+                )
+                self.environment.update(message=message, state=TrajectoryState.COMPLETED)
+            finally:
+                self.agent_manager.set_agent_state(agent_name=next_action.agent, new_state=AgentState.AVAILABLE)
             if self.is_task_completed(task=task):
                 break
             next_action: NextAction = self.workflow_manager.schedule_next_action(

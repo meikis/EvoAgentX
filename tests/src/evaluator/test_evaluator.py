@@ -67,22 +67,49 @@ class TestEvaluator(unittest.TestCase):
         self.assertEqual(results, {"accuracy": 1.0})
         self.assertEqual(len(self.evaluator.get_all_evaluation_records()), 2)
 
-    # def test_multi_thread_evaluation(self):
+    # @patch.object(Evaluator, '_execute_workflow_graph')
+    # def test_multi_thread_evaluation(self, mock_execute):
+    #     # Set up mock return value for workflow graph
+    #     mock_execute.return_value = ("workflow_graph_prediction", ["trajectory_data"])
+        
     #     # Test evaluation with multiple threads
     #     evaluator = Evaluator(
     #         llm=self.llm,
     #         num_workers=2,
+    #         agent_manager=self.agent_manager,
     #         verbose=True
     #     )
-    #     results = evaluator.evaluate(
+
+    #     # Test workflow graph
+    #     results_workflow = evaluator.evaluate(
+    #         graph=self.workflow_graph,
+    #         benchmark=self.benchmark,
+    #         eval_mode="test"
+    #     )
+    #     self.assertEqual(results_workflow, {"accuracy": 1.0})
+    #     self.assertEqual(len(evaluator.get_all_evaluation_records()), 2)
+    #     self.assertEqual(mock_execute.call_count, 2)
+
+    #     # Clear evaluation records for next test
+    #     evaluator._evaluation_records.clear()
+
+    #     # Test action graph
+    #     results_action = evaluator.evaluate(
     #         graph=self.action_graph,
     #         benchmark=self.benchmark,
     #         eval_mode="test"
     #     )
-
-    #     # Verify results
-    #     self.assertEqual(results, {"accuracy": 1.0})
+    #     self.assertEqual(results_action, {"accuracy": 1.0})
     #     self.assertEqual(len(evaluator.get_all_evaluation_records()), 2)
+
+    #     # Verify that records contain the expected data
+    #     records = evaluator.get_all_evaluation_records()
+    #     for record in records.values():
+    #         self.assertIn("prediction", record)
+    #         self.assertIn("label", record)
+    #         self.assertIn("metrics", record)
+    #         self.assertEqual(record["label"], "expected")
+    #         self.assertEqual(record["metrics"], {"accuracy": 1.0})
 
     def test_evaluation_with_custom_collate(self):
         # Test evaluation with custom collate function

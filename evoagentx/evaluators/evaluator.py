@@ -1,7 +1,9 @@
+import threading
+import contextvars
 from tqdm import tqdm
 # from time import time
 from typing import Callable, Optional, Any, List, Union, Tuple
-# from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..core.logging import logger
 from ..core.message import Message
@@ -48,6 +50,7 @@ class Evaluator:
         self.llm = llm
         self.num_workers = num_workers
         self.agent_manager = agent_manager
+        self._thread_agent_managers = {}
         self.collate_func = collate_func or (lambda x: x)
         self.output_postprocess_func = output_postprocess_func or (lambda x: x)
         self.verbose = verbose
@@ -55,17 +58,17 @@ class Evaluator:
         self._evaluation_records = {}
         self.kwargs = kwargs
 
-    def _get_eval_data(self, benchmark: Benchmark, eval_mode: str = "test", indices: Optional[List[int]] = None, sample_k: Optional[int] = None) -> List[dict]:
+    def _get_eval_data(self, benchmark: Benchmark, eval_mode: str = "test", indices: Optional[List[int]] = None, sample_k: Optional[int] = None, seed: Optional[int] = None) -> List[dict]:
         """
         Get the evaluation data from the benchmark.
         """
         assert eval_mode in ["test", "dev", "train"], f"Invalid eval_mode: {eval_mode}. Choices: ['test', 'dev', 'train']"
         if eval_mode == "test":
-            data = benchmark.get_test_data(indices=indices, sample_k=sample_k)
+            data = benchmark.get_test_data(indices=indices, sample_k=sample_k, seed=seed)
         elif eval_mode == "dev":
-            data = benchmark.get_dev_data(indices=indices, sample_k=sample_k)
+            data = benchmark.get_dev_data(indices=indices, sample_k=sample_k, seed=seed)
         else:
-            data = benchmark.get_train_data(indices=indices, sample_k=sample_k)
+            data = benchmark.get_train_data(indices=indices, sample_k=sample_k, seed=seed)
         return data
     
     def evaluate(
@@ -75,6 +78,7 @@ class Evaluator:
         eval_mode: str = "test", 
         indices: Optional[List[int]] = None, 
         sample_k: Optional[int] = None, 
+        seed: Optional[int] = None, 
         verbose: Optional[bool] = None,
         **kwargs
     ) -> dict:
@@ -94,7 +98,7 @@ class Evaluator:
         """
         # clear the evaluation records
         self._evaluation_records.clear()
-        data = self._get_eval_data(benchmark=benchmark, eval_mode=eval_mode, indices=indices, sample_k=sample_k)
+        data = self._get_eval_data(benchmark=benchmark, eval_mode=eval_mode, indices=indices, sample_k=sample_k, seed=seed)
         results = self._evaluate_graph(graph=graph, data=data, benchmark=benchmark, verbose=verbose, **kwargs)
         return results
     
@@ -114,7 +118,9 @@ class Evaluator:
             raise ValueError("`agent_manager` is not provided. Please provide an agent manager when evaluating a WorkFlowGraph.")
         
         # create a WorkFlow instance
-        workflow = WorkFlow(llm=self.llm, graph=graph, agent_manager=self.agent_manager, **kwargs)
+        graph_copy = WorkFlowGraph(goal=graph.goal, graph=graph)
+        graph_copy.reset_graph() # reset the status of all nodes to pending
+        workflow = WorkFlow(llm=self.llm, graph=graph_copy, agent_manager=self.agent_manager, **kwargs)
         output: str = workflow.execute(inputs=inputs, **kwargs)
         if return_trajectory:
             return output, workflow.environment.get()
@@ -216,8 +222,69 @@ class Evaluator:
             progress_bar.close()
         return results
 
+    def _create_new_agent_manager(self) -> AgentManager:
+        """Create a new agent manager with the same configuration but new locks"""
+        if self.agent_manager is None:
+            return None
+        # Create a new agent manager
+        new_manager = AgentManager(agents=self.agent_manager.agents, storage_handler=self.agent_manager.storage_handler)
+        return new_manager
+
+    def _get_thread_agent_manager(self) -> AgentManager:
+        """Get or create thread-specific agent manager"""
+        if self.agent_manager is None:
+            return None
+        thread_id = threading.get_ident()
+        if thread_id not in self._thread_agent_managers:
+            new_manager = self._create_new_agent_manager()
+            self._thread_agent_managers[thread_id] = new_manager
+        return self._thread_agent_managers[thread_id]
+
+    def _evaluate_single_example_with_context(self, graph: Union[WorkFlowGraph, ActionGraph], example: dict, benchmark: Benchmark, **kwargs) -> Optional[dict]:
+        """Wrapper that sets up thread-specific context before running evaluation"""
+        thread_agent_manager = self._get_thread_agent_manager()
+        if thread_agent_manager is None:
+            return self._evaluate_single_example(graph, example, benchmark, **kwargs)
+        
+        # Store original agent manager
+        original_agent_manager = self.agent_manager
+        try:
+            # Use thread-specific agent manager
+            self.agent_manager = thread_agent_manager
+            return self._evaluate_single_example(graph, example, benchmark, **kwargs)
+        finally:
+            # Restore original agent manager
+            self.agent_manager = original_agent_manager
+
     def _parallel_evaluate(self, graph: Union[WorkFlowGraph, ActionGraph], data: List[dict], benchmark: Benchmark, verbose: Optional[bool] = None, **kwargs) -> List[dict]:
-        raise NotImplementedError("Parallel evaluation is not implemented yet.")
+        if not data:
+            logger.warning("No data to evaluate. Return an empty list.")
+            return []
+        
+        results = [] 
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            futures = {
+                executor.submit(
+                    contextvars.copy_context().run,
+                    self._evaluate_single_example_with_context,
+                    graph, example, benchmark, **kwargs
+                ): example
+                for example in data
+            }
+            
+            if verbose:
+                progress_bar = tqdm(desc="Evaluating workflow", total=len(futures))
+                
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    results.append(result)
+                if verbose:
+                    progress_bar.update(1)
+                
+        if verbose:
+            progress_bar.close()
+        return results
 
     def _calculate_average_score(self, scores: List[dict]) -> dict:
         """

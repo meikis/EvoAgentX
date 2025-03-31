@@ -31,9 +31,12 @@ class AgentManager(BaseModule):
 
     def init_module(self):
         self._lock = threading.Lock()
+        self._state_conditions = {}
         if self.agents:
             for agent in self.agents:
                 self.agent_states[agent.name] = self.agent_states.get(agent.name, AgentState.AVAILABLE)
+                if agent.name not in self._state_conditions:
+                    self._state_conditions[agent.name] = threading.Condition()
             self.check_agents()
     
     def check_agents(self):
@@ -160,6 +163,8 @@ class AgentManager(BaseModule):
         agent_instance = self.create_agent(agent=agent)
         self.agents.append(agent_instance)
         self.agent_states[agent_instance.name] = AgentState.AVAILABLE
+        if agent_instance.name not in self._state_conditions:
+            self._state_conditions[agent_instance.name] = threading.Condition()
         self.check_agents()
 
     def add_agents(self, agents: List[Union[str, dict, Agent]], **kwargs):
@@ -207,6 +212,7 @@ class AgentManager(BaseModule):
         """
         self.agents = [agent for agent in self.agents if agent.name != agent_name]
         self.agent_states.pop(agent_name, None)
+        self._state_conditions.pop(agent_name, None) 
         if remove_from_storage:
             self.storage_handler.remove_agent(agent_name=agent_name, **kwargs)
         self.check_agents()
@@ -235,12 +241,23 @@ class AgentManager(BaseModule):
         Returns:
             bool: True if the state was updated successfully, False otherwise.
         """
+        # if agent_name in self.agent_states and isinstance(new_state, AgentState):
+        #     # self.agent_states[agent_name] = new_state
+        #     with self._state_conditions[agent_name]:
+        #         self.agent_states[agent_name] = new_state
+        #         self._state_conditions[agent_name].notify_all()
+        #     self.check_agents()
+        #     return True
+        # else:
+        #     return False
         if agent_name in self.agent_states and isinstance(new_state, AgentState):
-            self.agent_states[agent_name] = new_state
-            self.check_agents()
+            if agent_name not in self._state_conditions:
+                self._state_conditions[agent_name] = threading.Condition()
+            with self._state_conditions[agent_name]:
+                self.agent_states[agent_name] = new_state
+                self._state_conditions[agent_name].notify_all()
             return True
-        else:
-            return False
+        return False
 
     def get_all_agent_states(self) -> Dict[str, AgentState]:
         """
@@ -265,5 +282,27 @@ class AgentManager(BaseModule):
         """
         self.agents = [] 
         self.agent_states = {}
+        self._state_conditions = {}
         self.check_agents()
 
+    def wait_for_agent_available(self, agent_name: str, timeout: Optional[float] = None) -> bool:
+        """
+        Wait for an agent to be available.
+
+        Args:
+            agent_name (str): The name of the agent.
+            timeout (Optional[float]): The maximum time to wait for the agent to be available.
+
+        Returns:
+            bool: True if the agent is available, False otherwise.
+        """
+        if agent_name not in self._state_conditions:
+            self._state_conditions[agent_name] = threading.Condition()
+        condition = self._state_conditions[agent_name]
+
+        with condition:
+            return condition.wait_for(
+                lambda: self.agent_states.get(agent_name) == AgentState.AVAILABLE,
+                timeout=timeout
+            )
+        

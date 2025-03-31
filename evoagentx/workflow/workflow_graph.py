@@ -11,12 +11,11 @@ from typing import Union, Optional, Tuple, Dict, List
 from ..core.logging import logger
 from ..core.module import BaseModule
 from ..core.base_config import Parameter
-from ..core.decorators import atomic_method
 from .action_graph import ActionGraph
 from ..models.base_model import BaseLLM
 from ..models.model_configs import LLMConfig
 from ..utils.utils import generate_dynamic_class_name
-from ..prompts.workflow.sem_workflow import SEM_WORKFLOW
+from ..prompts.workflow.sew_workflow import SEW_WORKFLOW
 
 
 class WorkFlowNodeState(str, Enum):
@@ -302,7 +301,6 @@ class WorkFlowGraph(BaseModule):
         
         return all_loops
 
-    @atomic_method
     def add_node(self, node: WorkFlowNode, update_graph: bool = True, **kwargs):
 
         if not isinstance(node, WorkFlowNode):
@@ -315,7 +313,6 @@ class WorkFlowGraph(BaseModule):
         if update_graph:
             self.update_graph()
 
-    @atomic_method
     def add_edge(self, edge: WorkFlowEdge, update_graph: bool = True, **kwargs):
 
         if not isinstance(edge, WorkFlowEdge):
@@ -481,8 +478,14 @@ class WorkFlowGraph(BaseModule):
         if all(node_complete_list):
             return True
         return False
+    
+    def reset_graph(self):
+        """
+        set the status of all nodes to pending
+        """
+        for node in self.nodes:
+            node.set_status(WorkFlowNodeState.PENDING)
 
-    @atomic_method
     def set_node_status(self, node: Union[str, WorkFlowNode], new_state: WorkFlowNodeState) -> bool:
         """
         Update the state of a specific node. 
@@ -909,6 +912,7 @@ class SequentialWorkFlowGraph(WorkFlowGraph):
                 "inputs": [{"name": str, "type": str, "required": bool, "description": str}, ...],
                 "outputs": [{"name": str, "type": str, "required": bool, "description": str}, ...],
                 "prompt": str, 
+                "system_prompt" (optional): str,
                 "llm_config" (optional): dict,
                 "llm" (optional): BaseLLM,
                 "output_parser" (optional): Type[ActionOutput],
@@ -939,6 +943,7 @@ class SequentialWorkFlowGraph(WorkFlowGraph):
         agent_name = generate_dynamic_class_name(node_name+" Agent")
         agent_description = node_description.replace("task", "agent")
         agent_prompt = task["prompt"]
+        agent_system_prompt = task.get("system_prompt", None)
         agent_llm_config = task.get("llm_config", llm_config)
         agent_llm = task.get("llm", llm)
         agent_output_parser = task.get("output_parser", None)
@@ -956,6 +961,7 @@ class SequentialWorkFlowGraph(WorkFlowGraph):
                         "name": agent_name,
                         "description": agent_description,
                         "prompt": agent_prompt,
+                        "system_prompt": agent_system_prompt,
                         "llm_config": agent_llm_config,
                         "llm": agent_llm,
                         "inputs": inputs,
@@ -983,6 +989,7 @@ class SequentialWorkFlowGraph(WorkFlowGraph):
                     "inputs": [param.to_dict(ignore=["class_name"]) for param in node.inputs],
                     "outputs": [param.to_dict(ignore=["class_name"]) for param in node.outputs],
                     "prompt": node.agents[0].get("prompt", None),
+                    "system_prompt": node.agents[0].get("system_prompt", None),
                     "llm_config": node.agents[0].get("llm_config", None).to_dict(exclude_none=True) \
                         if node.agents[0].get("llm_config", None) is not None else \
                             node.agents[0]["llm"].config.to_dict(exclude_none=True),
@@ -1006,9 +1013,9 @@ class SequentialWorkFlowGraph(WorkFlowGraph):
         return path
     
 
-class SEMWorkFlowGraph(SequentialWorkFlowGraph):
+class SEWWorkFlowGraph(SequentialWorkFlowGraph):
 
     def __init__(self, llm_config: Optional[LLMConfig] = None, llm: Optional[BaseLLM] = None, **kwargs):
-        goal = kwargs.pop("goal", SEM_WORKFLOW["goal"])
-        tasks = kwargs.pop("tasks", SEM_WORKFLOW["tasks"])
+        goal = kwargs.pop("goal", SEW_WORKFLOW["goal"])
+        tasks = kwargs.pop("tasks", SEW_WORKFLOW["tasks"])
         super().__init__(goal=goal, tasks=tasks, llm_config=llm_config, llm=llm, **kwargs)

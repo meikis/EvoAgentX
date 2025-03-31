@@ -1,7 +1,7 @@
 import unittest
 from evoagentx.models import OpenAILLMConfig, OpenAILLM 
-from evoagentx.workflow.workflow_graph import SEMWorkFlowGraph 
-from evoagentx.optimizers.sem_optimizer import SEMWorkFlowScheme
+from evoagentx.workflow.workflow_graph import SEWWorkFlowGraph 
+from evoagentx.optimizers.sew_optimizer import SEWWorkFlowScheme
 
 
 
@@ -9,8 +9,8 @@ class TestModule(unittest.TestCase):
 
     def setUp(self):
         self.model = OpenAILLM(config=OpenAILLMConfig(model="gpt-4o-mini", openai_key="XXX"))
-        self.graph = SEMWorkFlowGraph(llm=self.model)
-        self.scheme = SEMWorkFlowScheme(self.graph)
+        self.graph = SEWWorkFlowGraph(llm=self.model)
+        self.scheme = SEWWorkFlowScheme(self.graph)
 
     def test_python_scheme(self):
 
@@ -30,15 +30,15 @@ class TestModule(unittest.TestCase):
 
         # test create new graph  
         steps = eval(repr.replace("steps = ", "").strip())
-        new_steps = steps[:4] + [{"name": "test", "args": ["test_input", "code"], "outputs": ["test_output"]}] + steps[4:]
+        new_steps = steps + [{"name": "test", "args": ["test_input", "code"], "outputs": ["test_output"]}]
         new_repr = "steps = " + str(new_steps)
         new_graph = self.scheme.parse_workflow_python_repr("```python\n" + new_repr + "\n```")
         new_graph_info = new_graph.get_graph_info() 
-        self.assertEqual(len(new_graph_info["tasks"]), 6) 
-        self.assertEqual(new_graph_info["tasks"][-2]["name"], "test") 
-        new_task_inputs = [input_info["name"] for input_info in new_graph_info["tasks"][-2]["inputs"]]
+        self.assertEqual(len(new_graph_info["tasks"]), 3) 
+        self.assertEqual(new_graph_info["tasks"][-1]["name"], "test") 
+        new_task_inputs = [input_info["name"] for input_info in new_graph_info["tasks"][-1]["inputs"]]
         self.assertEqual(new_task_inputs, ["test_input", "code"])
-        new_task_outputs = [output_info["name"] for output_info in new_graph_info["tasks"][-2]["outputs"]]
+        new_task_outputs = [output_info["name"] for output_info in new_graph_info["tasks"][-1]["outputs"]]
         self.assertEqual(new_task_outputs, ["test_output"])
         self.assertFalse(new_graph == self.graph)
     
