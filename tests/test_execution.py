@@ -801,11 +801,12 @@ async def test_workflow_generator_2():
     
     # Initialize LLM
     llm_config = OpenAILLMConfig(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         openai_key=OPENAI_API_KEY,
         temperature=0.3,
-        max_tokens=1000,
-        top_p=0.9
+        top_p=0.9,
+        stream=True,
+        output_response=True
     )
     llm = OpenAILLM(config=llm_config)
     
@@ -817,6 +818,7 @@ async def test_workflow_generator_2():
     Create a web application that allows users to ask questions and get respond using ChatGPT with a key.
     """
     
+    # from pdb import set_trace; set_trace()
     print("\n=== Generating Workflow ===")
     print("Goal:", goal)
     
@@ -829,7 +831,7 @@ async def test_workflow_generator_2():
     print(f"type of plan: {type(plan)}")
     print("\nJSON content:\n", plan)
     print(f"_________________________")
-    print(plan.sub_tasks)z
+    print(plan.sub_tasks)
     
     print("Building the workflow from the plan ...")
     workflow = workflow_generator.build_workflow_from_plan(goal=goal, plan=plan)

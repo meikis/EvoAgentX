@@ -67,9 +67,7 @@ class WorkFlowGenerator(BaseModule):
             action_input_data=task_planning_action_data,
             return_msg_type=MessageType.REQUEST
         )
-        # return message.content
-        content_str = str(message.content)
-        return TaskPlanningOutput.parse(content_str, parse_mode="json")
+        return message.content
     
     def generate_agents(
         self, 
