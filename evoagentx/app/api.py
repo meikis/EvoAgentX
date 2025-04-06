@@ -14,9 +14,10 @@ from evoagentx.app.schemas import (
     WorkflowCreate, WorkflowUpdate, WorkflowResponse,
     ExecutionCreate, ExecutionResponse,
     PaginationParams, SearchParams,
-    Token, UserCreate, UserLogin, UserResponse, AgentQueryRequest
+    Token, UserCreate, UserLogin, UserResponse, AgentQueryRequest,
+    WorkflowGenerateRequest
 )
-from evoagentx.app.services import AgentService, WorkflowService, WorkflowExecutionService, AgentBackupService
+from evoagentx.app.services import AgentService, WorkflowService, WorkflowExecutionService, AgentBackupService, WorkflowGeneratorService
 from evoagentx.app.security import (
     create_access_token, 
     authenticate_user, 
@@ -32,6 +33,7 @@ agents_router = APIRouter(prefix=settings.API_PREFIX)
 workflows_router = APIRouter(prefix=settings.API_PREFIX)
 executions_router = APIRouter(prefix=settings.API_PREFIX)
 system_router = APIRouter(prefix=settings.API_PREFIX)
+workflow_generator_router = APIRouter(prefix=settings.API_PREFIX)
 
 # Authentication Routes
 @auth_router.post("/auth/register", response_model=UserResponse, tags=["Authentication"])
@@ -463,11 +465,41 @@ async def health_check():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
 
+# Workflow Generator Routes
+@workflow_generator_router.post("/workflows/generate", response_model=Dict[str, Any], tags=["Workflow Generator"])
+async def generate_workflow(
+    request: WorkflowGenerateRequest,
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """
+    Generate a workflow based on a goal description and LLM configuration.
+    
+    This endpoint will:
+    1. Take the provided goal and LLM configuration
+    2. Generate a workflow graph with appropriate tasks and relationships
+    3. Return the serialized workflow that can be stored in a database
+    """
+    try:
+        result = await WorkflowGeneratorService.generate_workflow(
+            goal=request.goal,
+            llm_config=request.llm_config
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating workflow: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while generating the workflow: {str(e)}"
+        )
+
 # Export the routers
 __all__ = [
     'auth_router',
     'agents_router',
     'workflows_router',
     'executions_router',
-    'system_router'
+    'system_router',
+    'workflow_generator_router'
 ]

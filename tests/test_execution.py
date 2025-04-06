@@ -30,6 +30,10 @@ import json
 from pydantic import Field
 from evoagentx.agents.agent_generator import AgentGenerator
 from evoagentx.actions.agent_generation import AgentGenerationOutput
+from networkx import MultiDiGraph
+from copy import deepcopy
+import warnings
+
 # API KEY for OpenAI models
 OPENAI_API_KEY="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"
 
@@ -104,6 +108,180 @@ class SimpleQAAction(Action):
         else:
             return output
 
+
+
+def multidigraph_to_dict(G):
+    """Convert a NetworkX MultiDiGraph to a dictionary.
+    
+    This function extracts all graph metadata, nodes, and edges (with their keys)
+    into a serializable dictionary format.
+    
+    Parameters
+    ----------
+    G : MultiDiGraph
+        The graph to convert
+    
+    Returns
+    -------
+    dict
+        A dictionary representation of the graph with the following structure:
+        {
+            'directed': True,  # Always true for MultiDiGraph
+            'multigraph': True,  # Always true for MultiDiGraph
+            'graph': dict,  # Graph attributes
+            'nodes': list of dicts,  # Node attributes
+            'edges': list of dicts,  # Edge attributes with source, target, key
+        }
+    """
+    if not isinstance(G, MultiDiGraph):
+        raise TypeError("Input graph must be a NetworkX MultiDiGraph")
+    
+    # Initialize the dictionary with graph metadata
+    data = {
+        'directed': True,  # MultiDiGraph is always directed
+        'multigraph': True,  # MultiDiGraph is always a multigraph
+        'graph': deepcopy(G.graph),  # Graph attributes
+        'nodes': [],
+        'edges': []
+    }
+    
+    # Add nodes with their attributes
+    for node, node_attrs in G.nodes(data=True):
+        node_dict = {'id': node}
+        node_dict.update(deepcopy(node_attrs))
+        data['nodes'].append(node_dict)
+    
+    # Add edges with their attributes and keys
+    for u, v, key, edge_attrs in G.edges(data=True, keys=True):
+        edge_dict = {
+            'source': u,
+            'target': v,
+            'key': key
+        }
+        edge_dict.update(deepcopy(edge_attrs))
+        data['edges'].append(edge_dict)
+    
+    return data
+
+
+def dict_to_multidigraph(data):
+    """Convert a dictionary representation back to a NetworkX MultiDiGraph.
+    
+    Parameters
+    ----------
+    data : dict
+        Dictionary containing graph data with nodes, edges, and attributes
+    
+    Returns
+    -------
+    G : MultiDiGraph
+        A MultiDiGraph reconstructed from the dictionary
+    """
+    # Validate the input data
+    if not isinstance(data, dict):
+        raise TypeError("Input data must be a dictionary")
+    
+    # Check if the data represents a multigraph and directed graph
+    is_directed = data.get('directed', True)
+    is_multigraph = data.get('multigraph', True)
+    
+    if not (is_directed and is_multigraph):
+        # If the data doesn't indicate it's a directed multigraph, warn but continue
+        import warnings
+        warnings.warn("Input data does not specify a directed multigraph, but forcing creation of MultiDiGraph")
+    
+    # Create a new MultiDiGraph
+    G = MultiDiGraph()
+    
+    # Set graph attributes
+    if 'graph' in data:
+        G.graph.update(deepcopy(data['graph']))
+    
+    # Add nodes with attributes
+    for node_data in data.get('nodes', []):
+        # Copy the node data dict
+        node_attrs = deepcopy(node_data)
+        # Extract the ID (remove it from attributes)
+        node_id = node_attrs.pop('id')
+        # Add the node with its attributes
+        G.add_node(node_id, **node_attrs)
+    
+    # Add edges with attributes and keys
+    for edge_data in data.get('edges', []):
+        # Copy the edge data dict
+        edge_attrs = deepcopy(edge_data)
+        # Extract source, target, and key
+        source = edge_attrs.pop('source')
+        target = edge_attrs.pop('target')
+        edge_key = edge_attrs.pop('key', None)  # Key is optional
+        
+        # Add the edge with its key and attributes
+        G.add_edge(source, target, key=edge_key, **edge_attrs)
+    
+    return G
+
+
+def workflow_graph_to_dict(workflow_graph):
+    """Convert a WorkFlowGraph to a dictionary with built-in Python types.
+    
+    This function converts a WorkFlowGraph and all its components (nodes, edges, etc.)
+    into a fully serializable dictionary containing only built-in Python types.
+    
+    Parameters
+    ----------
+    workflow_graph : WorkFlowGraph
+        The workflow graph to convert
+    
+    Returns
+    -------
+    dict
+        A dictionary representation of the workflow graph with all components
+        converted to built-in Python types
+    """
+    # First use the to_dict method from BaseModule
+    workflow_dict = workflow_graph.to_dict(exclude_none=True, ignore=["graph"])
+    
+    # If the graph attribute exists and is a MultiDiGraph, convert it to dict
+    if workflow_graph.graph is not None:
+        if isinstance(workflow_graph.graph, dict):
+            # The graph is already a dict
+            workflow_dict["graph"] = workflow_graph.graph
+        else:
+            # Convert MultiDiGraph to dict
+            workflow_dict["graph"] = multidigraph_to_dict(workflow_graph.graph)
+    
+    return workflow_dict
+
+
+def dict_to_workflow_graph(workflow_dict):
+    """Convert a dictionary back to a WorkFlowGraph.
+    
+    This function reconstructs a WorkFlowGraph from a dictionary representation.
+    
+    Parameters
+    ----------
+    workflow_dict : dict
+        Dictionary representation of a workflow graph
+    
+    Returns
+    -------
+    WorkFlowGraph
+        The reconstructed WorkFlowGraph
+    """
+    # Make a copy to avoid modifying the original dict
+    workflow_data = deepcopy(workflow_dict)
+    
+    # If 'graph' key exists in the dictionary
+    graph_data = workflow_data.pop("graph", None)
+    
+    # Use from_dict method of BaseModule to create the WorkFlowGraph
+    workflow_graph = WorkFlowGraph.from_dict(workflow_data)
+    
+    # If graph data exists, convert it back to MultiDiGraph and set it
+    if graph_data is not None:
+        workflow_graph.graph = dict_to_multidigraph(graph_data)
+    
+    return workflow_graph
 
 
 # @pytest.mark.asyncio
@@ -796,12 +974,14 @@ async def test_workflow_generator_2():
     1. Generate a task plan
     2. Build a workflow graph
     3. Generate appropriate agents for tasks
+    4. Serialize and deserialize the workflow graph
     """
     print("\n=== Testing Workflow Generator ===")
     
     # Initialize LLM
     llm_config = OpenAILLMConfig(
-        model="gpt-3.5-turbo",
+        # model="gpt-3.5-turbo",
+        model="gpt-4o-mini",
         openai_key=OPENAI_API_KEY,
         temperature=0.3,
         top_p=0.9,
@@ -821,53 +1001,29 @@ async def test_workflow_generator_2():
     # from pdb import set_trace; set_trace()
     print("\n=== Generating Workflow ===")
     print("Goal:", goal)
+    workflow_graph = workflow_generator.generate_workflow(goal=goal)
     
-    # Generate the workflow
-    plan_history, plan_suggestion = "", ""
-    # generate the initial workflow
-    print("Generating the initial workflow ...")
-    plan = workflow_generator.generate_plan(goal=goal, history=plan_history, suggestion=plan_suggestion)
-    print(f"_________________________")
-    print(f"type of plan: {type(plan)}")
-    print("\nJSON content:\n", plan)
-    print(f"_________________________")
-    print(plan.sub_tasks)
+    # Convert WorkFlowGraph to dictionary with built-in types
+    print("\n=== Converting WorkFlowGraph to Dictionary ===")
+    workflow_dict = workflow_graph_to_dict(workflow_graph)
+    print(f"Workflow dict type: {type(workflow_dict)}")
     
-    print("Building the workflow from the plan ...")
-    workflow = workflow_generator.build_workflow_from_plan(goal=goal, plan=plan)
-    print(f"_________________________")
-    print(f"type of workflow: {type(workflow)}")
-    print("\nWorkflow content:\n", workflow)
-    print(f"_________________________")
+    # Reconstruct WorkFlowGraph from dictionary
+    print("\n=== Reconstructing WorkFlowGraph from Dictionary ===")
+    reconstructed_workflow = dict_to_workflow_graph(workflow_dict)
+    print(f"Reconstructed workflow type: {type(reconstructed_workflow)}")
     
-    print("Generating agents for the workflow ...")
-    print("workflow_desc: ", workflow.get_workflow_description())
-    workflow = workflow_generator.generate_agents(goal=goal, workflow=workflow, existing_agents=[])
-    print(f"_________________________")
-    print(f"type of workflow: {type(workflow)}")
-    print("\nWorkflow content:\n", workflow)
-    print(f"_________________________")
-    # workflow = {"class_name": "WorkFlowGraph", "goal": "\n    Create a web application that allows users to ask questions and get respond using ChatGPT with a key.\n    ", "nodes": [{"class_name": "WorkFlowNode", "name": "design_interface", "description": "Design the user interface for the web application.", "inputs": [{"class_name": "Parameter", "name": "goal", "type": "string", "description": "The user's goal in textual format.", "required": true}], "outputs": [{"class_name": "Parameter", "name": "interface_design", "type": "string", "description": "The design of the user interface for the web application.", "required": true}], "reason": "A user-friendly interface is necessary for users to interact with the application.", "status": "pending"}, {"class_name": "WorkFlowNode", "name": "setup_backend", "description": "Set up the backend for the web application.", "inputs": [{"class_name": "Parameter", "name": "interface_design", "type": "string", "description": "The design of the user interface for the web application.", "required": true}], "outputs": [{"class_name": "Parameter", "name": "backend_setup", "type": "string", "description": "The setup of the backend for the web application.", "required": true}], "reason": "The backend is necessary to handle user requests and responses.", "status": "pending"}, {"class_name": "WorkFlowNode", "name": "integrate_chatgpt", "description": "Integrate the ChatGPT API into the web application.", "inputs": [{"class_name": "Parameter", "name": "backend_setup", "type": "string", "description": "The setup of the backend for the web application.", "required": true}], "outputs": [{"class_name": "Parameter", "name": "chatgpt_integration", "type": "string", "description": "The integration of the ChatGPT API into the web application.", "required": true}], "reason": "The ChatGPT API is necessary to generate responses to user questions.", "status": "pending"}, {"class_name": "WorkFlowNode", "name": "test_application", "description": "Test the web application to ensure it works as expected.", "inputs": [{"class_name": "Parameter", "name": "chatgpt_integration", "type": "string", "description": "The integration of the ChatGPT API into the web application.", "required": true}], "outputs": [{"class_name": "Parameter", "name": "test_results", "type": "string", "description": "The results of testing the web application.", "required": true}], "reason": "Testing is necessary to identify and fix any issues before the application is released.", "status": "pending"}], "edges": [{"class_name": "WorkFlowEdge", "source": "design_interface", "target": "setup_backend", "priority": 0}, {"class_name": "WorkFlowEdge", "source": "setup_backend", "target": "integrate_chatgpt", "priority": 0}, {"class_name": "WorkFlowEdge", "source": "integrate_chatgpt", "target": "test_application", "priority": 0}], "graph": "<networkx.classes.multidigraph.MultiDiGraph object at 0x7ff138d9b100>"}
-    # workflow_desc = workflow.get_workflow_description()
-    # agent_generator = AgentGenerator(llm=llm)
-    # for subtask in workflow.nodes:
-    #         subtask_fields = ["name", "description", "reason", "inputs", "outputs"]
-    #         subtask_data = {key: value for key, value in subtask.to_dict(ignore=["class_name"]).items() if key in subtask_fields}
-    #         subtask_desc = json.dumps(subtask_data, indent=4)
-    #         agent_generation_action_data = {"goal": goal, "workflow": workflow_desc, "task": subtask_desc}
-    #         agents: AgentGenerationOutput = agent_generator.execute(
-    #             action_name=AgentGenerator.agent_generation_action_name, 
-    #             action_input_data=agent_generation_action_data,
-    #             return_msg_type=MessageType.RESPONSE
-    #         ).content
-    #         # todo I only handle generated agents
-    #         generated_agents = []
-    #         for agent in agents.generated_agents:
-    #             agent_dict = agent.to_dict(ignore=["class_name"])
-    #             agent_dict["llm_config"] = llm.config.to_dict()
-    #             generated_agents.append(agent_dict)
-    #         subtask.set_agents(agents=generated_agents)
+    # Verify the reconstruction worked correctly
+    print("\nWorkflow description after reconstruction:")
+    print(reconstructed_workflow.get_workflow_description())
+    
+    print(f"\nOriginal nodes: {len(workflow_graph.nodes)}")
+    print(f"Reconstructed nodes: {len(reconstructed_workflow.nodes)}")
+    
+    assert len(workflow_graph.nodes) == len(reconstructed_workflow.nodes), "Node count should match"
+    assert len(workflow_graph.edges) == len(reconstructed_workflow.edges), "Edge count should match"
+    
+    from pdb import set_trace; set_trace()
 
     assert False, "Test completed - check the output"
 
-    

@@ -170,3 +170,7 @@ class SearchParams(BaseSchema):
 class AgentQueryRequest(BaseModel):
     prompt: str
     history: Optional[List[Dict[str, str]]] = None
+
+class WorkflowGenerateRequest(BaseSchema):
+    goal: str
+    llm_config: Dict[str, Any]

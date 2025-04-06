@@ -1014,3 +1014,46 @@ class AgentBackupService:
             
         # Restore all agents from the found backup files
         return await AgentBackupService.restore_agents_from_files(backup_files)
+
+class WorkflowGeneratorService:
+    @staticmethod
+    async def generate_workflow(goal: str, llm_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate a workflow graph based on a goal and LLM configuration.
+        
+        Args:
+            goal: The goal or task description for the workflow
+            llm_config: Configuration for the language model
+            
+        Returns:
+            A serialized workflow graph that can be stored in the database
+        """
+        try:
+            # Create the LLM config
+            from evoagentx.models.model_configs import OpenAILLMConfig
+            from evoagentx.models.openai_model import OpenAILLM
+            from evoagentx.workflow.workflow_generator import WorkFlowGenerator
+            from evoagentx.utils.workflow_serialization import workflow_graph_to_dict
+            
+            # Configure LLM
+            config = OpenAILLMConfig(**llm_config)
+            llm = OpenAILLM(config=config)
+            
+            # Initialize workflow generator
+            workflow_generator = WorkFlowGenerator(llm=llm)
+            
+            # Generate workflow
+            logger.info(f"Generating workflow for goal: {goal}")
+            workflow_graph = workflow_generator.generate_workflow(goal=goal)
+            
+            # Convert to dictionary (only built-in types)
+            workflow_dict = workflow_graph_to_dict(workflow_graph)
+            
+            return {
+                "success": True,
+                "workflow": workflow_dict,
+                "goal": goal
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate workflow: {str(e)}")
+            raise ValueError(f"Failed to generate workflow: {str(e)}")
